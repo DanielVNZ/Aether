@@ -1,0 +1,189 @@
+/* TV Remote / Keyboard Navigation Styles */
+
+/* Reset focus outline globally - we'll add custom ones */
+*:focus {
+  outline: none;
+}
+
+/* TV Navigation Mode - Body class when TV nav is active */
+body.tv-navigation {
+  /* Prevent janky scroll behavior */
+  scroll-behavior: smooth;
+}
+
+/* ================================
+   FOCUSABLE ELEMENT BASE STYLES
+   ================================ */
+
+/* All potentially focusable elements get smooth transitions */
+button,
+a,
+[tabindex],
+.focusable-card,
+.focusable-item,
+.focusable-tab,
+input,
+select {
+  transition: transform 0.15s ease-out, 
+              box-shadow 0.15s ease-out, 
+              outline 0.15s ease-out,
+              background-color 0.15s ease-out;
+}
+
+/* Make sure buttons can receive pointer events */
+button {
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ================================
+   STANDARD FOCUS STYLES - Only when keyboard is used
+   ================================ */
+
+/* Default focus ring for all interactive elements */
+body.using-keyboard button:focus,
+body.using-keyboard button:focus-visible,
+body.using-keyboard a:focus,
+body.using-keyboard a:focus-visible,
+body.using-keyboard [tabindex="0"]:focus,
+body.using-keyboard [tabindex="0"]:focus-visible,
+body.using-keyboard [role="button"]:focus,
+body.using-keyboard [role="button"]:focus-visible,
+body.using-keyboard [role="menuitem"]:focus,
+body.using-keyboard [role="menuitem"]:focus-visible {
+  outline: 3px solid rgba(59, 130, 246, 0.9) !important;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.25), 
+              0 0 20px rgba(59, 130, 246, 0.4) !important;
+  z-index: 100 !important;
+  position: relative;
+}
+
+/* Input focus styles */
+body.using-keyboard input:focus,
+body.using-keyboard input:focus-visible,
+body.using-keyboard select:focus,
+body.using-keyboard select:focus-visible {
+  outline: 3px solid rgba(59, 130, 246, 0.9) !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2),
+              inset 0 0 0 1px rgba(59, 130, 246, 0.5) !important;
+}
+
+/* ================================
+   MEDIA CARD FOCUS STYLES (Home/Browse)
+   ================================ */
+
+/* Prominent focus for media cards - needs to stand out on TV */
+body.using-keyboard .focusable-card:focus,
+body.using-keyboard .focusable-card:focus-visible {
+  outline: 4px solid rgba(59, 130, 246, 1) !important;
+  outline-offset: 6px;
+  box-shadow: 0 0 0 8px rgba(59, 130, 246, 0.3),
+              0 0 40px rgba(59, 130, 246, 0.6),
+              0 8px 32px rgba(0, 0, 0, 0.5) !important;
+  transform: scale(1.08);
+  z-index: 100 !important;
+  position: relative;
+}
+
+/* ================================
+   LIST/MENU ITEM FOCUS STYLES
+   ================================ */
+
+/* Episode and menu items */
+body.using-keyboard .focusable-item:focus,
+body.using-keyboard .focusable-item:focus-visible {
+  outline: 3px solid rgba(59, 130, 246, 1) !important;
+  outline-offset: 2px;
+  background: rgba(59, 130, 246, 0.15) !important;
+  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4) !important;
+}
+
+/* Tab/pill button focus */
+body.using-keyboard .focusable-tab:focus,
+body.using-keyboard .focusable-tab:focus-visible {
+  outline: 3px solid rgba(59, 130, 246, 1) !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.5) !important;
+  transform: scale(1.05);
+}
+
+/* ================================
+   PLAYER-SPECIFIC FOCUS STYLES
+   ================================ */
+
+/* Player control buttons */
+body.using-keyboard .player-control:focus,
+body.using-keyboard .player-control:focus-visible {
+  outline: 3px solid rgba(255, 255, 255, 0.9) !important;
+  outline-offset: 4px;
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.2),
+              0 0 20px rgba(255, 255, 255, 0.4) !important;
+  transform: scale(1.1);
+}
+
+/* Player menu items (audio/subtitle tracks) */
+body.using-keyboard .player-menu-item:focus,
+body.using-keyboard .player-menu-item:focus-visible {
+  outline: none !important;
+  background: rgba(59, 130, 246, 0.3) !important;
+  box-shadow: inset 0 0 0 2px rgba(59, 130, 246, 0.8) !important;
+}
+
+/* ================================
+   SCROLL CONTAINER FIXES
+   ================================ */
+
+/* Ensure scroll containers don't break focus */
+.overflow-x-auto,
+.overflow-y-auto,
+[style*="overflow"] {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Items in scroll containers must be focusable */
+.overflow-x-auto button,
+.overflow-x-auto > * button,
+.overflow-x-auto .focusable-card,
+[role="list"] button,
+[role="list"] .focusable-card {
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
+}
+
+/* ================================
+   ANIMATION HELPERS
+   ================================ */
+
+/* Subtle pulse animation for currently focused element */
+@keyframes tv-focus-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.25),
+                0 0 20px rgba(59, 130, 246, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0.35),
+                0 0 30px rgba(59, 130, 246, 0.5);
+  }
+}
+
+/* Apply pulse to focused cards on TV */
+body.tv-navigation.using-keyboard .focusable-card:focus {
+  animation: tv-focus-pulse 2s ease-in-out infinite;
+}
+
+/* ================================
+   HIDE CURSOR IN TV MODE
+   ================================ */
+
+/* After keyboard navigation starts, hide cursor */
+body.keyboard-nav {
+  cursor: none;
+}
+
+body.keyboard-nav * {
+  cursor: none !important;
+}
+
