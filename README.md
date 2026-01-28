@@ -48,7 +48,7 @@ npm install
 ```bash
 npm run dev
 ```
-Then open http://localhost:1420 in your browser.
+Then open http://localhost:5173 in your browser.
 
 **Desktop App (Tauri):**
 ```bash
