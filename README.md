@@ -2,7 +2,7 @@
 
 A modern, sleek media player client for Emby servers. Built with React, TypeScript, Tailwind CSS, and Tauri for native desktop performance.
 
-![Modern Emby](https://img.shields.io/badge/Platform-Windows-blue) ![License](https://img.shields.io/badge/License-MIT-green)
+![Modern Emby](https://img.shields.io/badge/Platform-Windows-blue) ![Android TV](https://img.shields.io/badge/Platform-Android%20TV-green) ![License](https://img.shields.io/badge/License-MIT-green)
 
 ## ✨ Features
 
