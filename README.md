@@ -26,8 +26,8 @@ Built with a **Direct Play Focus**, it bypasses server-side transcoding to deliv
 | :--- | :--- |
 | **Modern UI/UX:** Silky smooth React transitions designed for both the desktop mouse and the "10-foot" couch experience. | **Direct Play Focus:** No transcoding, no quality loss. Aether requests original streams for maximum performance. |
 | **TV-First Navigation:** Full D-pad and keyboard support with optimized focus handling for Android TV. | **Stats for Nerds:** Real-time monitoring of bitrates, resolution, and buffering health. |
-| **Dynamic Home:** Smart *Continue Watching* and personalized recommendations synced with your Emby account. | **HLS Engine:** Robust streaming via HLS.js with full support for multi-audio and subtitle tracks. |
-| **The “Vibe” Factor:** 150+ humorous loading messages to keep things fun. | **Rust-Powered:** Lightweight, secure, blazing-fast desktop builds via Tauri. |
+| **Dynamic Home:** Smart *Continue Watching* and personalized recommendations synced with your Emby account. | **Rust-Powered:** Lightweight, secure, blazing-fast desktop builds via Tauri. |
+
 
 ---
 
