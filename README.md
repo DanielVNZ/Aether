@@ -48,9 +48,10 @@ Built with a **Direct Play Focus**, it bypasses server-side transcoding to deliv
 
 ## 📸 Screenshots
 
-> **Note**  
-> Visuals coming soon. The UI is still being polished to reflect the final design language.
-
+<img src="README_Images/Snip1.png" alt="Aether Screenshot 1" width="800" /> <br /><br />
+<img src="README_Images/Snip2.png" alt="Aether Screenshot 1" width="800" /> <br /><br />
+<img src="README_Images/Snip3.png" alt="Aether Screenshot 1" width="800" /> <br /><br />
+<img src="README_Images/Snip4.png" alt="Aether Screenshot 1" width="800" /> <br /><br />
 ---
 
 ## 🏁 Getting Started
