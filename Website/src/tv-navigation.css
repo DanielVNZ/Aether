@@ -242,9 +242,9 @@ body.tv-device.using-keyboard .player-control:focus-visible {
 
 /* Home hero: keep normal sizing */
 body.tv-device .home-hero.tv-hero {
-  padding-bottom: 0 !important;
-  min-height: unset !important;
-  height: auto !important;
+  padding-bottom: 1.5rem !important;
+  min-height: 360px !important;
+  height: 60vh !important;
 }
 
 /* MediaDetails hero: padding-driven layout on TV */
@@ -254,6 +254,75 @@ body.tv-device .media-details .tv-hero {
   height: auto !important;
 }
 
+/* MediaDetails (Movie) hero: reduce gap before "More Like This" on TV */
+body.tv-device .media-details.media-details-movie .tv-hero {
+  padding-bottom: 80px !important;
+}
+
+/* MediaDetails (TV) layout: fit within screen and improve D-pad flow */
+body.tv-device .media-details .media-details-hero {
+  padding-top: 4rem !important;
+}
+
+body.tv-device .media-details .media-details-hero-content {
+  flex-direction: row !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 1.5rem !important;
+}
+
+body.tv-device .media-details .media-details-info {
+  order: 1 !important;
+  max-width: 100% !important;
+}
+
+body.tv-device .media-details .media-details-poster {
+  order: 2 !important;
+  width: 12rem !important;
+  display: block !important;
+}
+
+body.tv-device .media-details .media-details-title {
+  font-size: 1.8rem !important;
+  line-height: 1.2 !important;
+  margin-bottom: 0.75rem !important;
+}
+
+body.tv-device .media-details .media-details-meta {
+  gap: 0.5rem 1rem !important;
+  font-size: 0.9rem !important;
+  margin-bottom: 0.75rem !important;
+}
+
+body.tv-device .media-details .media-details-genres {
+  gap: 0.4rem !important;
+  margin-bottom: 0.75rem !important;
+}
+
+body.tv-device .media-details .media-details-genres button {
+  padding: 0.2rem 0.6rem !important;
+  font-size: 0.75rem !important;
+}
+
+body.tv-device .media-details .media-details-overview {
+  font-size: 0.9rem !important;
+  line-height: 1.4 !important;
+  margin-bottom: 1rem !important;
+  max-width: 100% !important;
+  -webkit-line-clamp: 3 !important;
+  line-clamp: 3 !important;
+}
+
+body.tv-device .media-details .media-details-actions {
+  gap: 0.6rem 0.8rem !important;
+}
+
+body.tv-device .media-details .media-details-actions .primary-action,
+body.tv-device .media-details .media-details-actions button {
+  padding: 0.65rem 1rem !important;
+  font-size: 0.95rem !important;
+}
+
 /* Tighten general line-heights for headings on TV */
 body.tv-device h1, body.tv-device h2, body.tv-device h3 {
   line-height: 1.15;
@@ -261,12 +330,12 @@ body.tv-device h1, body.tv-device h2, body.tv-device h3 {
 
 /* Home hero title/overview scale down on TV */
 body.tv-device .tv-hero-title {
-  font-size: clamp(1.8rem, 4.6vw, 3.2rem) !important; /* around 32-52px */
+  font-size: clamp(1.1rem, 2.6vw, 2rem) !important; /* around 18-32px */
   margin-bottom: 0.6rem !important;
 }
 
 body.tv-device .tv-hero-overview {
-  font-size: 0.98rem !important;
+  font-size: 0.75rem !important;
   line-height: 1.45 !important;
   display: -webkit-box;
   -webkit-box-orient: vertical;

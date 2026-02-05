@@ -1,144 +1,139 @@
-# Aether
+<div align="center">
 
-A modern, sleek media player client for Emby servers. Built with React, TypeScript, Tailwind CSS, and Tauri for native desktop performance.
+# 🌌 Aether
+### The Definitive Direct-Play Experience for Emby
 
-![Aether](https://img.shields.io/badge/Platform-Windows-blue) ![Android TV](https://img.shields.io/badge/Platform-Android%20TV-green) ![License](https://img.shields.io/badge/License-MIT-green)
+[![Platform - Windows](https://img.shields.io/badge/Platform-Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/DanielVNZ/modern-emby)
+[![Platform - Android TV](https://img.shields.io/badge/Platform-Android%20TV-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/DanielVNZ/modern-emby)
+[![License - MIT](https://img.shields.io/badge/License-MIT-FFD700?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
-## ✨ Features
+[**Explore the Docs**](#-getting-started) •
+[**Report a Bug**](https://github.com/DanielVNZ/modern-emby/issues) •
+[**Request a Feature**](https://github.com/DanielVNZ/modern-emby/issues)
 
-- **Modern UI** - Beautiful, responsive interface with smooth animations and transitions
-- **Video Player** - Full-featured player with HLS streaming support
-  - Stats for nerds panel (bitrate, resolution, buffering info)
-  - Up Next popup with auto-play
-  - Seek bar with timestamp preview
-  - Multiple audio track & subtitle support
-  - Version/quality selector
-- **TV Navigation** - Full keyboard/remote control support for TV interfaces
-- **Series Support** - Browse seasons and episodes with compact grid layout
-- **More Like This** - Discover similar content recommendations
-- **Watch Progress** - Track your progress across all media
-- **Fun Loading Screens** - 150+ random funny loading messages
+---
 
-## 🖥️ Screenshots
+**Aether** is a modern, sleek media player client designed for purists.  
+Built with a **Direct Play Focus**, it bypasses server-side transcoding to deliver the highest possible audio and video fidelity on Windows and Android TV.
 
-*Coming soon*
+</div>
 
-## 📋 Prerequisites
+---
 
-Before building, ensure you have the following installed:
+## 🚀 Key Features
 
-- **Node.js** (v18 or higher) - [Download](https://nodejs.org/)
-- **Rust** (latest stable) - [Install via rustup](https://rustup.rs/)
-- **Visual Studio Build Tools** (Windows) - Required for Rust compilation
-  - Install "Desktop development with C++" workload
+| 💎 Premium Experience | 🛠️ Technical Prowess |
+| :--- | :--- |
+| **Modern UI/UX:** Silky smooth React transitions designed for both the desktop mouse and the "10-foot" couch experience. (kind of lol) | **Direct Play Focus:** No transcoding, no quality loss. Aether requests original streams for maximum performance. |
+| **TV-First Navigation:** Full D-pad and keyboard support with optimized focus handling for Android TV. | **Stats for Nerds:** Real-time monitoring of bitrates, resolution, and buffering health. |
+| **Dynamic Home:** Smart *Continue Watching* and personalized recommendations synced with your Emby account. | **Rust-Powered:** Lightweight, secure, blazing-fast desktop builds via Tauri. |
 
-## 🚀 Getting Started
 
-### 1. Clone the Repository
+---
+
+## 🛠️ Tech Stack
+
+<details>
+<summary><b>View Architecture Details</b></summary>
+
+- **Frontend:** React 18 + TypeScript  
+- **Styling:** Tailwind CSS + Framer Motion  
+- **Desktop Wrapper:** Tauri 2.0 (Rust)  
+- **Runtime:** Node.js + Vite  
+- **Streaming:** HLS.js  
+
+</details>
+
+---
+
+## 📸 Screenshots
+
+> **Note**  
+> Visuals coming soon. The UI is still being polished to reflect the final design language.
+
+---
+
+## 🏁 Getting Started
+
+### Prerequisites
+
+- **Node.js** v18+
+- **Rust** (stable, via `rustup`)
+- **Visual Studio Build Tools**  
+  *(Windows only — “Desktop development with C++”)*
+
+---
+
+### Quick Setup
 
 ```bash
+# Clone the repository
 git clone https://github.com/DanielVNZ/modern-emby.git
 cd modern-emby/Website
-```
 
-### 2. Install Dependencies
-
-```bash
+# Install dependencies
 npm install
-```
 
-### 3. Run in Development Mode
-
-**Web Browser (for development):**
-```bash
+# Launch in Dev Mode (Web)
 npm run dev
-```
-Then open http://localhost:1420 in your browser.
 
-**Desktop App (Tauri):**
-```bash
+# Launch Desktop App (Tauri)
 npm run tauri dev
 ```
 
-## 📦 Building for Windows
+---
 
-### Build Windows Executable (.exe)
+## 📦 Distribution
+
+To generate production-ready Windows installers:
 
 ```bash
 npm run tauri build
 ```
 
-This will create:
-- **Installer (NSIS):** `src-tauri/target/release/bundle/nsis/Aether_x.x.x_x64-setup.exe`
-- **MSI Installer:** `src-tauri/target/release/bundle/msi/Aether_x.x.x_x64_en-US.msi`
-- **Standalone EXE:** `src-tauri/target/release/Aether.exe`
+### Build Artifacts
 
-### Build Options
-
-The build process creates multiple distribution formats:
-- **NSIS Installer** - Standard Windows installer with install/uninstall support
-- **MSI Installer** - Enterprise-friendly Windows Installer package
-- **Portable EXE** - Standalone executable (no installation required)
-
-## 🔧 Configuration
-
-On first launch, you'll be prompted to enter:
-1. **Emby Server URL** - Your Emby server address (e.g., `http://192.168.1.100:8096`)
-2. **Username & Password** - Your Emby account credentials
-
-## 🏗️ Project Structure
-
-```
-Website/
-├── src/
-│   ├── components/      # React components
-│   │   ├── Home.tsx         # Dashboard/home screen
-│   │   ├── Browse.tsx       # Media browser
-│   │   ├── MediaDetails.tsx # Movie/series details
-│   │   ├── Player.tsx       # Video player
-│   │   └── ...
-│   ├── services/        # API services
-│   │   └── embyApi.ts       # Emby API integration
-│   ├── hooks/           # Custom React hooks
-│   └── types/           # TypeScript type definitions
-├── src-tauri/           # Tauri (Rust) backend
-│   ├── src/
-│   │   └── main.rs          # Tauri entry point
-│   └── tauri.conf.json      # Tauri configuration
-└── package.json
-```
-
-## 🛠️ Tech Stack
-
-- **Frontend:** React 18, TypeScript, Tailwind CSS
-- **Build Tool:** Vite
-- **Desktop Framework:** Tauri 2.0 (Rust)
-- **Video Streaming:** HLS.js
-- **Styling:** Tailwind CSS with custom animations
-
-## 📱 Platform Support
-
-| Platform | Status |
-|----------|--------|
-| Windows  | ✅ Supported |
-| Android  | ✅ Supported |
-| Web      | ✅ Supported | (self hosted)
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 Acknowledgments
-
-- [Emby](https://emby.media/) - Media server
-- [Tauri](https://tauri.app/) - Desktop framework
-- [React](https://react.dev/) - UI library
-- [Tailwind CSS](https://tailwindcss.com/) - CSS framework
+- 🛠️ **NSIS Installer:** `.exe`
+- 📦 **MSI Bundle:** `.msi`
+- 🚀 **Portable Build:** `.exe`
 
 ---
 
-**Note:** This is an unofficial client and is not affiliated with Emby LLC.
+## ⚠️ Important Notes
+
+> **Important**  
+> **Direct Play Only:**  
+> Aether intentionally avoids transcoding. If your device cannot natively decode a codec (for example HEVC on unsupported hardware), playback may fail.  
+>  
+> This is by design — your server stays cool and your media remains **bit-perfect**.
+
+---
+
+## 🤝 Contributing
+
+1. Fork the project  
+2. Create your feature branch  
+   ```bash
+   git checkout -b feature/AmazingFeature
+   ```
+3. Commit your changes  
+   ```bash
+   git commit -m "Add AmazingFeature"
+   ```
+4. Push to your branch  
+   ```bash
+   git push origin feature/AmazingFeature
+   ```
+5. Open a Pull Request
+
+---
+
+<div align="center">
+  <sub>
+    Built with ❤️ by <a href="https://github.com/DanielVNZ">DanielVNZ</a> and the community.
+  </sub>
+  <br />
+  <sub>
+    <i>Aether is an unofficial client and is not affiliated with Emby LLC.</i>
+  </sub>
+</div>

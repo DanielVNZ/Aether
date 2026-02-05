@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { embyApi } from '../services/embyApi';
 import type { EmbyItem } from '../types/emby.types';
@@ -26,6 +26,9 @@ export function Stats() {
   useTVNavigation();
   const [stats, setStats] = useState<WatchStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const statsRef = useRef<HTMLDivElement>(null);
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareToast, setShareToast] = useState<string | null>(null);
 
   useEffect(() => {
     loadStats();
@@ -166,6 +169,264 @@ export function Stats() {
     return parts.join(', ') || '0 minutes';
   };
 
+  const inlineStyles = (source: HTMLElement, target: HTMLElement) => {
+    const computed = window.getComputedStyle(source);
+    let cssText = '';
+    for (const prop of computed) {
+      // Avoid embedding external images that can taint the canvas
+      if (prop === 'background-image' || prop === 'mask-image') continue;
+      cssText += `${prop}:${computed.getPropertyValue(prop)};`;
+    }
+    target.setAttribute('style', cssText);
+    const sourceChildren = Array.from(source.children) as HTMLElement[];
+    const targetChildren = Array.from(target.children) as HTMLElement[];
+    for (let i = 0; i < sourceChildren.length; i += 1) {
+      if (targetChildren[i]) inlineStyles(sourceChildren[i], targetChildren[i]);
+    }
+  };
+
+  const sanitizeClone = (root: HTMLElement) => {
+    root.style.fontFamily = 'system-ui, -apple-system, Segoe UI, sans-serif';
+    const imgs = Array.from(root.querySelectorAll('img'));
+    imgs.forEach((img) => {
+      const placeholder = document.createElement('div');
+      placeholder.style.width = `${img.width || img.clientWidth}px`;
+      placeholder.style.height = `${img.height || img.clientHeight}px`;
+      placeholder.style.background = 'linear-gradient(135deg, rgba(55,65,81,0.6), rgba(31,41,55,0.9))';
+      placeholder.style.borderRadius = window.getComputedStyle(img).borderRadius || '0px';
+      placeholder.style.display = 'block';
+      img.replaceWith(placeholder);
+    });
+
+    const withBackgrounds = Array.from(root.querySelectorAll<HTMLElement>('*'));
+    withBackgrounds.forEach((el) => {
+      const bg = window.getComputedStyle(el).backgroundImage;
+      if (bg && bg !== 'none' && bg.includes('url(')) {
+        el.style.backgroundImage = 'none';
+      }
+      el.style.fontFamily = 'system-ui, -apple-system, Segoe UI, sans-serif';
+      if (el.style.filter) el.style.filter = 'none';
+      if ((el.style as any).backdropFilter) (el.style as any).backdropFilter = 'none';
+    });
+  };
+
+  const captureStatsPng = async (element: HTMLElement): Promise<Blob> => {
+    const rect = element.getBoundingClientRect();
+    const clone = element.cloneNode(true) as HTMLElement;
+    inlineStyles(element, clone);
+    sanitizeClone(clone);
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+    wrapper.appendChild(clone);
+
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${rect.width}" height="${rect.height}">
+        <foreignObject width="100%" height="100%">${new XMLSerializer().serializeToString(wrapper)}</foreignObject>
+      </svg>
+    `;
+
+    const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+
+    try {
+      const img = new Image();
+      const pngBlob = await new Promise<Blob>((resolve, reject) => {
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = rect.width;
+          canvas.height = rect.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Canvas unavailable'));
+            return;
+          }
+          ctx.drawImage(img, 0, 0);
+          try {
+            canvas.toBlob((blob) => {
+              if (!blob) {
+                reject(new Error('Failed to create PNG'));
+                return;
+              }
+              resolve(blob);
+            }, 'image/png');
+          } catch (err) {
+            reject(err);
+          }
+        };
+        img.onerror = () => reject(new Error('Failed to load image'));
+        img.src = url;
+      });
+      return pngBlob;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const renderFallbackPng = async (payload: WatchStats): Promise<Blob> => {
+    const width = 1280;
+    const height = 720;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas unavailable');
+
+    const bg = ctx.createLinearGradient(0, 0, width, height);
+    bg.addColorStop(0, '#0b1020');
+    bg.addColorStop(0.45, '#11182b');
+    bg.addColorStop(1, '#0a0f1d');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, width, height);
+
+    // soft glow blobs
+    const glow1 = ctx.createRadialGradient(250, 180, 0, 250, 180, 320);
+    glow1.addColorStop(0, 'rgba(56,189,248,0.25)');
+    glow1.addColorStop(1, 'rgba(56,189,248,0)');
+    ctx.fillStyle = glow1;
+    ctx.fillRect(0, 0, 600, 500);
+
+    const glow2 = ctx.createRadialGradient(width - 220, 140, 0, width - 220, 140, 360);
+    glow2.addColorStop(0, 'rgba(168,85,247,0.22)');
+    glow2.addColorStop(1, 'rgba(168,85,247,0)');
+    ctx.fillStyle = glow2;
+    ctx.fillRect(width - 700, 0, 700, 520);
+
+    // frosted card background
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(40, 40, width - 80, height - 80);
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(40.5, 40.5, width - 81, height - 81);
+
+    ctx.fillStyle = '#E5E7EB';
+    ctx.font = '700 44px system-ui, -apple-system, Segoe UI, sans-serif';
+    ctx.fillText('Watch Statistics', 90, 120);
+    ctx.fillStyle = '#9CA3AF';
+    ctx.font = '400 18px system-ui, -apple-system, Segoe UI, sans-serif';
+    ctx.fillText('Your viewing history at a glance', 90, 150);
+
+    // accent pill
+    ctx.fillStyle = 'rgba(59,130,246,0.18)';
+    ctx.fillRect(90, 170, 140, 30);
+    ctx.fillStyle = '#93C5FD';
+    ctx.font = '600 12px system-ui, -apple-system, Segoe UI, sans-serif';
+    ctx.fillText('AETHER STATS', 102, 190);
+
+    // top divider
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath();
+    ctx.moveTo(90, 215);
+    ctx.lineTo(width - 90, 215);
+    ctx.stroke();
+
+    const drawStatCard = (label: string, value: string, x: number, y: number, w: number, h: number, accent: string) => {
+      ctx.fillStyle = 'rgba(17,24,39,0.55)';
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      ctx.fillStyle = accent;
+      ctx.fillRect(x, y, 4, h);
+      ctx.fillStyle = '#9CA3AF';
+      ctx.font = '500 14px system-ui, -apple-system, Segoe UI, sans-serif';
+      ctx.fillText(label, x + 16, y + 26);
+      ctx.fillStyle = '#F9FAFB';
+      ctx.font = '700 30px system-ui, -apple-system, Segoe UI, sans-serif';
+      ctx.fillText(value, x + 16, y + 62);
+    };
+
+    // Fancy top line for total watch time
+    const watchTimeText = formatWatchTime(payload.totalWatchTimeTicks);
+    const sectionGap = 22;
+    const topY = 210;
+    const topH = 96;
+    ctx.fillStyle = 'rgba(30,41,59,0.7)';
+    ctx.fillRect(70, topY, 1140, topH);
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.strokeRect(70.5, topY + 0.5, 1139, topH - 1);
+    const shine = ctx.createLinearGradient(70, topY, 1210, topY + topH);
+    shine.addColorStop(0, 'rgba(56,189,248,0.18)');
+    shine.addColorStop(1, 'rgba(168,85,247,0.18)');
+    ctx.fillStyle = shine;
+    ctx.fillRect(70, topY, 1140, topH);
+    ctx.fillStyle = '#9CA3AF';
+    ctx.font = '600 14px system-ui, -apple-system, Segoe UI, sans-serif';
+    ctx.fillText('Total Watch Time', 95, topY + 28);
+    ctx.fillStyle = '#F9FAFB';
+    ctx.font = '800 36px system-ui, -apple-system, Segoe UI, sans-serif';
+    ctx.fillText(watchTimeText, 95, topY + 68);
+    // (Removed) detailed watch time line to avoid duplicate display
+
+    // Second line: Movies watched + Avg rating + series info (equal widths)
+    const rowY = topY + topH + sectionGap;
+    const rowGap = 20;
+    const rowWidth = width - 140;
+    const cardW = Math.floor((rowWidth - rowGap * 3) / 4);
+    const cardH = 88;
+    drawStatCard('Movies Watched', String(payload.totalMovies), 70, rowY, cardW, cardH, '#22C55E');
+    drawStatCard('Avg Movie Rating', payload.averageRating.toFixed(1), 70 + cardW + rowGap, rowY, cardW, cardH, '#FBBF24');
+    drawStatCard('Episodes Watched', String(payload.totalEpisodes), 70 + (cardW + rowGap) * 2, rowY, cardW, cardH, '#A855F7');
+    drawStatCard('Series Watched', String(payload.totalSeries), 70 + (cardW + rowGap) * 3, rowY, cardW, cardH, '#F59E0B');
+
+    // Bottom line: Top Genres / Studios
+    const topGenres = payload.favoriteGenres.slice(0, 5).map(g => g.name).join(' • ');
+    const topStudios = payload.favoriteStudios.slice(0, 5).map(s => s.name).join(' • ');
+    ctx.fillStyle = 'rgba(17,24,39,0.55)';
+    const bottomY = rowY + cardH + sectionGap;
+    const bottomH = 130;
+    ctx.fillRect(70, bottomY, width - 140, bottomH);
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.strokeRect(70.5, bottomY + 0.5, width - 141, bottomH - 1);
+
+    ctx.fillStyle = '#A5B4FC';
+    ctx.font = '600 16px system-ui, -apple-system, Segoe UI, sans-serif';
+    ctx.fillText('Top Genres', 95, bottomY + 32);
+    ctx.fillStyle = '#CBD5F5';
+    ctx.font = '400 16px system-ui, -apple-system, Segoe UI, sans-serif';
+    ctx.fillText(topGenres || '-', 95, bottomY + 56);
+    ctx.fillStyle = '#C4B5FD';
+    ctx.font = '600 16px system-ui, -apple-system, Segoe UI, sans-serif';
+    ctx.fillText('Top Studios', 95, bottomY + 96);
+    ctx.fillStyle = '#E0E7FF';
+    ctx.font = '400 16px system-ui, -apple-system, Segoe UI, sans-serif';
+    ctx.fillText(topStudios || '-', 95, bottomY + 120);
+
+    // subtle footer
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.font = '500 12px system-ui, -apple-system, Segoe UI, sans-serif';
+    ctx.fillText('Aether • Stats Snapshot', 70, height - 55);
+
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error('Failed to create PNG'));
+          return;
+        }
+        resolve(blob);
+      }, 'image/png');
+    });
+  };
+
+  const handleShare = async () => {
+    if (!statsRef.current || isSharing || !stats) return;
+    setIsSharing(true);
+    try {
+      let blob: Blob;
+      try {
+        blob = await captureStatsPng(statsRef.current);
+      } catch (err) {
+        blob = await renderFallbackPng(stats);
+      }
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      setShareToast('Copied stats as PNG');
+    } catch (error) {
+      console.error('Failed to share stats:', error);
+      setShareToast('Could not copy PNG');
+    } finally {
+      setIsSharing(false);
+      setTimeout(() => setShareToast(null), 2200);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950">
@@ -243,11 +504,52 @@ export function Stats() {
               <h1 className="text-2xl font-bold text-white">Watch Statistics</h1>
               <p className="text-sm text-gray-400">Your viewing history at a glance</p>
             </div>
+            <div className="ml-auto flex items-center gap-3">
+              {shareToast && (
+                <div className="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/10 text-emerald-200 text-xs">
+                  <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <path d="M5 11l3 3L15 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span>{shareToast}</span>
+                </div>
+              )}
+              <button
+                onClick={handleShare}
+                tabIndex={0}
+                disabled={isSharing}
+                className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all focusable-item flex items-center gap-2 border ${
+                  isSharing
+                    ? 'bg-white/10 text-gray-400 border-white/10 cursor-wait'
+                    : 'bg-gradient-to-r from-emerald-500/20 to-cyan-500/20 text-emerald-200 border-emerald-400/30 hover:from-emerald-500/30 hover:to-cyan-500/30'
+                }`}
+              >
+                {isSharing ? (
+                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 12v7a1 1 0 001 1h14a1 1 0 001-1v-7M16 6l-4-4-4 4m4-4v14" />
+                  </svg>
+                )}
+                Share PNG
+              </button>
+            </div>
           </div>
+          {shareToast && (
+            <div className="mt-3 sm:hidden inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-emerald-400/30 bg-emerald-500/10 text-emerald-200 text-xs">
+              <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M5 11l3 3L15 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span>{shareToast}</span>
+            </div>
+          )}
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
+        <div ref={statsRef}>
         {/* Main Stats Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           {/* Total Watch Time */}
@@ -441,6 +743,7 @@ export function Stats() {
             </div>
           </div>
         )}
+        </div>
       </main>
     </div>
   );

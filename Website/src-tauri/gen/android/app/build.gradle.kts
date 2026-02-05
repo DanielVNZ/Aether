@@ -17,7 +17,8 @@ android {
     compileSdk = 36
     namespace = "com.aether.app"
     defaultConfig {
-        manifestPlaceholders["usesCleartextTraffic"] = "false"
+        // Allow HTTP for LAN Emby servers in all build types.
+        manifestPlaceholders["usesCleartextTraffic"] = "true"
         applicationId = "com.aether.app"
         minSdk = 24
         targetSdk = 36
@@ -40,7 +41,6 @@ android {
     }
     buildTypes {
         getByName("debug") {
-            manifestPlaceholders["usesCleartextTraffic"] = "true"
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false

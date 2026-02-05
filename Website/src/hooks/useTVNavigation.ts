@@ -26,9 +26,16 @@ export function useTVNavigation(options: {
 } = {}) {
   const lastFocusedElement = useRef<HTMLElement | null>(null);
   const lastNavTimeRef = useRef<number>(0);
+  const focusableCacheRef = useRef<{ container: HTMLElement | Document; elements: HTMLElement[]; dirty: boolean; ts: number; grid: { size: number; map: Map<string, HTMLElement[]> } | null } | null>(null);
+  const lastFocusedBySectionRef = useRef<Map<string, HTMLElement>>(new Map());
 
   // Get focusable elements within a container
   const getFocusableElements = useCallback((container: HTMLElement | Document = document): HTMLElement[] => {
+    const cached = focusableCacheRef.current;
+    const now = Date.now();
+    if (cached && cached.container === container && !cached.dirty && now - cached.ts < 250) {
+      return cached.elements;
+    }
     // If reorder mode is active globally, restrict focusable elements to the reorder controls
     const reorderActive = document.body.getAttribute('data-reorder-mode') === 'true';
 
@@ -83,6 +90,31 @@ export function useTVNavigation(options: {
 
       return true;
     });
+
+    const gridSize = 220;
+    const gridMap = new Map<string, HTMLElement[]>();
+    for (const el of filtered) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      const bx = Math.floor((rect.left + rect.width / 2) / gridSize);
+      const by = Math.floor((rect.top + rect.height / 2) / gridSize);
+      const key = `${bx}:${by}`;
+      const bucket = gridMap.get(key);
+      if (bucket) {
+        bucket.push(el);
+      } else {
+        gridMap.set(key, [el]);
+      }
+    }
+
+    if (cached && cached.container === container) {
+      cached.elements = filtered;
+      cached.dirty = false;
+      cached.ts = now;
+      cached.grid = { size: gridSize, map: gridMap };
+    } else {
+      focusableCacheRef.current = { container, elements: filtered, dirty: false, ts: now, grid: { size: gridSize, map: gridMap } };
+    }
 
     return filtered;
   }, []);
@@ -153,6 +185,50 @@ export function useTVNavigation(options: {
     const currentRowContainer = getRowContainer(currentElement);
     const currentIsInCardRow = isInCardRow(currentElement);
     const currentIsInHeader = isInHeader(currentElement);
+    const currentEpisodesGrid = currentElement.closest('.episodes-grid');
+    const currentMoreLikeThis = currentElement.closest('.more-like-this');
+    const currentBottomOnlyCard = currentElement.hasAttribute('data-tv-bottom-only')
+      ? currentElement.closest<HTMLElement>('.focusable-card')
+      : null;
+    const getSpatialCandidates = (): HTMLElement[] | null => {
+      const cached = focusableCacheRef.current;
+      if (!cached || cached.elements !== elements || !cached.grid) return null;
+      const { size, map } = cached.grid;
+      const rect = currentElement.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const bx = Math.floor(cx / size);
+      const by = Math.floor(cy / size);
+      const beam = direction === 'up' || direction === 'down' ? 80 : 60;
+      const bxMin = Math.floor((cx - beam) / size);
+      const bxMax = Math.floor((cx + beam) / size);
+      const byMin = Math.floor((cy - beam) / size);
+      const byMax = Math.floor((cy + beam) / size);
+      const maxSteps = 10;
+      const candidates: HTMLElement[] = [];
+
+      if (direction === 'up' || direction === 'down') {
+        for (let step = 1; step <= maxSteps; step++) {
+          const y = direction === 'down' ? by + step : by - step;
+          for (let x = bxMin; x <= bxMax; x++) {
+            const bucket = map.get(`${x}:${y}`);
+            if (bucket) candidates.push(...bucket);
+          }
+          if (candidates.length > 0) break;
+        }
+      } else {
+        for (let step = 1; step <= maxSteps; step++) {
+          const x = direction === 'right' ? bx + step : bx - step;
+          for (let y = byMin; y <= byMax; y++) {
+            const bucket = map.get(`${x}:${y}`);
+            if (bucket) candidates.push(...bucket);
+          }
+          if (candidates.length > 0) break;
+        }
+      }
+
+      return candidates.length > 0 ? candidates : null;
+    };
 
     // If on a card and pressing UP, prefer its internal "bottom-only" control (favorite star)
     if (direction === 'up' && currentElement.classList.contains('focusable-card')) {
@@ -160,6 +236,11 @@ export function useTVNavigation(options: {
       if (innerFav) {
         return innerFav;
       }
+    }
+
+    // If we're on a bottom-only control and pressing UP, leave the card section
+    if (direction === 'up' && currentElement.hasAttribute('data-tv-bottom-only')) {
+      // Defer until after findBest is defined so we can pick the best candidate above
     }
 
     // If navigating vertically from a card row, prefer the nearest header button,
@@ -238,6 +319,72 @@ export function useTVNavigation(options: {
       // (to allow moving to elements outside the row)
     }
 
+    // Row header (See All) navigation: keep within header row for left/right
+    if ((direction === 'left' || direction === 'right') && isRowHeaderButton(currentElement)) {
+      const headerRow = currentElement.closest('.flex.items-center.gap-3') || currentElement.parentElement;
+      if (headerRow) {
+        const headerElements = Array.from(headerRow.querySelectorAll<HTMLElement>(
+          'button:not([disabled]):not([tabindex="-1"]), [tabindex="0"], a[href]:not([tabindex="-1"])'
+        )).filter(el => {
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+          return true;
+        });
+        const currentIndex = headerElements.indexOf(currentElement);
+        if (currentIndex !== -1) {
+          const nextIndex = direction === 'right' ? currentIndex + 1 : currentIndex - 1;
+          if (nextIndex >= 0 && nextIndex < headerElements.length) {
+            return headerElements[nextIndex];
+          }
+        }
+      }
+    }
+
+    // Row header (See All) navigation: go down into the row below
+    if (direction === 'down' && isRowHeaderButton(currentElement)) {
+      const rowContainerSet = new Set<HTMLElement>();
+      for (const el of elements) {
+        const container = getRowContainer(el);
+        if (container) rowContainerSet.add(container);
+      }
+      const rowContainers = Array.from(rowContainerSet);
+      rowContainers.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+      const nextRowContainer = rowContainers.find(c => c.getBoundingClientRect().top > currentRect.bottom - 10) || null;
+      if (nextRowContainer) {
+        const rowElements = Array.from(nextRowContainer.querySelectorAll<HTMLElement>(
+          'button:not([disabled]):not([tabindex="-1"]), [tabindex="0"]'
+        )).filter(el => {
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+          if (el.hasAttribute('data-tv-bottom-only')) return false;
+          return true;
+        });
+        if (rowElements.length > 0) {
+          return rowElements[0];
+        }
+      }
+    }
+
+    // Row header (See All) navigation: go up to the nearest item above (like bottom-only)
+    if (direction === 'up' && isRowHeaderButton(currentElement)) {
+      const candidates = elements.filter(el => el !== currentElement && !currentElement.contains(el));
+      const aboveCandidates = candidates.filter(el => {
+        const rect = el.getBoundingClientRect();
+        return rect.bottom < currentRect.top - 4;
+      });
+      if (aboveCandidates.length > 0) {
+        aboveCandidates.sort((a, b) => {
+          const ra = a.getBoundingClientRect();
+          const rb = b.getBoundingClientRect();
+          const da = currentRect.top - ra.bottom;
+          const db = currentRect.top - rb.bottom;
+          if (da !== db) return da - db;
+          return Math.abs(ra.left - currentRect.left) - Math.abs(rb.left - currentRect.left);
+        });
+        return aboveCandidates[0];
+      }
+    }
+
     // Special-case: if we're in the top header and pressing DOWN, prefer the nearest focusable below
     if (direction === 'down' && currentIsInHeader) {
       try {
@@ -280,12 +427,45 @@ export function useTVNavigation(options: {
       }
     }
 
+    // For header navigation, use strict DOM order to avoid skipping items
+    if ((direction === 'left' || direction === 'right') && currentIsInHeader) {
+      const headerEl = currentElement.closest('header');
+      if (headerEl) {
+        const headerElements = Array.from(headerEl.querySelectorAll<HTMLElement>(
+          'button:not([disabled]):not([tabindex="-1"]), [tabindex="0"], a[href]:not([tabindex="-1"])'
+        )).filter(el => {
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+          return true;
+        });
+        const currentIndex = headerElements.indexOf(currentElement);
+        if (currentIndex !== -1) {
+          const nextIndex = direction === 'right' ? currentIndex + 1 : currentIndex - 1;
+          if (nextIndex >= 0 && nextIndex < headerElements.length) {
+            return headerElements[nextIndex];
+          }
+        }
+      }
+    }
+
+    const isOccluded = (el: HTMLElement): boolean => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return true;
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      if (cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight) return true;
+      const topEl = document.elementFromPoint(cx, cy);
+      if (!topEl) return false;
+      return !(topEl === el || el.contains(topEl));
+    };
+
     const findBest = (candidateElements: HTMLElement[]) => {
       let bestElement: HTMLElement | null = null;
       let bestScore = Infinity;
 
       for (const element of candidateElements) {
         if (element === currentElement) continue;
+        if (isOccluded(element)) continue;
         if (element.hasAttribute('data-tv-bottom-only')) {
           if (direction === 'down' && !nearPageBottom) {
             continue;
@@ -369,6 +549,10 @@ export function useTVNavigation(options: {
         // Calculate score - lower is better
         // Heavily favor elements in the same row for horizontal navigation
         let score = primaryDistance;
+        const beamThreshold = direction === 'up' || direction === 'down' ? 80 : 60;
+        const inBeam = direction === 'up' || direction === 'down'
+          ? Math.abs(centerX - currentCenterX) <= beamThreshold
+          : Math.abs(centerY - currentCenterY) <= beamThreshold;
         
         if (direction === 'left' || direction === 'right') {
           if (sameRow) {
@@ -381,9 +565,15 @@ export function useTVNavigation(options: {
             // Different row: penalize very heavily - we almost never want this
             score = primaryDistance + (secondaryDistance * 50) + 5000;
           }
+          if (inBeam) {
+            score -= 8000;
+          }
         } else {
           // Vertical navigation
           score = primaryDistance + (secondaryDistance * 0.3);
+          if (inBeam) {
+            score -= 3000;
+          }
           
           // When navigating UP from a card row, still penalize other cards in different rows
           if (direction === 'up' && currentIsInCardRow) {
@@ -451,6 +641,65 @@ export function useTVNavigation(options: {
       return bestElement;
     };
 
+    if (direction === 'up' && currentElement.hasAttribute('data-tv-bottom-only')) {
+      const candidates = elements.filter(el => !currentBottomOnlyCard || !currentBottomOnlyCard.contains(el));
+      const bestOutsideCard = findBest(candidates);
+      if (bestOutsideCard) return bestOutsideCard;
+
+      const aboveCandidates = candidates.filter(el => {
+        const rect = el.getBoundingClientRect();
+        return rect.bottom < currentRect.top - 4;
+      });
+      if (aboveCandidates.length > 0) {
+        aboveCandidates.sort((a, b) => {
+          const ra = a.getBoundingClientRect();
+          const rb = b.getBoundingClientRect();
+          const da = currentRect.top - ra.bottom;
+          const db = currentRect.top - rb.bottom;
+          if (da !== db) return da - db;
+          return Math.abs(ra.left - currentRect.left) - Math.abs(rb.left - currentRect.left);
+        });
+        return aboveCandidates[0];
+      }
+    }
+
+    // If we're inside the episodes grid, prefer navigation within the grid first
+    if (currentEpisodesGrid && (direction === 'up' || direction === 'down')) {
+      const gridCandidates = elements.filter(el => el.closest('.episodes-grid') === currentEpisodesGrid);
+      const bestInGrid = findBest(gridCandidates);
+      if (bestInGrid) return bestInGrid;
+
+      // Fallback for dense grids: pick the nearest item in the next/prev row
+      const currentRect = currentElement.getBoundingClientRect();
+      const rowCandidates = gridCandidates.filter(el => {
+        if (el === currentElement) return false;
+        const rect = el.getBoundingClientRect();
+        if (direction === 'down') return rect.top > currentRect.bottom - 4;
+        return rect.bottom < currentRect.top + 4;
+      });
+      if (rowCandidates.length > 0) {
+        rowCandidates.sort((a, b) => {
+          const ra = a.getBoundingClientRect();
+          const rb = b.getBoundingClientRect();
+          const da = direction === 'down' ? ra.top - currentRect.bottom : currentRect.top - ra.bottom;
+          const db = direction === 'down' ? rb.top - currentRect.bottom : currentRect.top - rb.bottom;
+          if (da !== db) return da - db;
+          return Math.abs(ra.left - currentRect.left) - Math.abs(rb.left - currentRect.left);
+        });
+        return rowCandidates[0];
+      }
+    }
+
+    // If we're in "More Like This", prefer jumping back into the episodes section on UP
+    if (currentMoreLikeThis && direction === 'up') {
+      const episodesSection = document.querySelector('.media-details .media-episodes-section');
+      if (episodesSection) {
+        const sectionCandidates = elements.filter(el => episodesSection.contains(el));
+        const bestInSection = findBest(sectionCandidates);
+        if (bestInSection) return bestInSection;
+      }
+    }
+
     if (currentGroup && (direction === 'up' || direction === 'down')) {
       const orderedGroupElements = elements
         .filter(el => el.closest('[data-tv-group]')?.getAttribute('data-tv-group') === currentGroup)
@@ -477,7 +726,8 @@ export function useTVNavigation(options: {
       if (bestInGroup) return bestInGroup;
     }
 
-    return findBest(elements);
+    const spatialCandidates = getSpatialCandidates();
+    return findBest(spatialCandidates || elements);
   }, [getFocusableElements]);
 
   // Focus an element and scroll it into view
@@ -574,6 +824,12 @@ export function useTVNavigation(options: {
     // Now focus the element
     element.focus({ preventScroll: true });
     lastFocusedElement.current = element;
+
+    const section = element.closest('[data-tv-section], .home-hero, .media-episodes-section, .more-like-this, header, .player-ui, main');
+    if (section) {
+      const sectionId = section.getAttribute('data-tv-section') || section.className || section.tagName;
+      lastFocusedBySectionRef.current.set(sectionId, element);
+    }
   }, []);
 
   // Handle keyboard navigation
@@ -768,6 +1024,9 @@ export function useTVNavigation(options: {
       const activeElement = document.activeElement;
       if (!activeElement || activeElement === document.body) {
         setTimeout(ensureFocus, 100);
+      }
+      if (focusableCacheRef.current) {
+        focusableCacheRef.current.dirty = true;
       }
     });
 

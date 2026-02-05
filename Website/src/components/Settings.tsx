@@ -13,6 +13,8 @@ export function Settings() {
     { id: 'continue_movies', label: 'Continue Watching Movies' },
     { id: 'continue_tv', label: 'Continue Watching TV' },
     { id: 'favorites', label: 'Favorites' },
+    { id: 'recommended_movies', label: 'Recommended Movies' },
+    { id: 'recommended_series', label: 'Recommended Series' },
     { id: 'trending_movies', label: 'Trending Movies' },
     { id: 'popular_tv', label: 'Popular TV Shows' },
     { id: 'latest_movies', label: 'Latest Movies' },

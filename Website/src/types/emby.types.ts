@@ -133,6 +133,30 @@ export interface ServerInfo {
   WanAddress: string;
 }
 
+export interface ConnectAuthResponse {
+  ConnectAccessToken?: string;
+  ConnectUserId?: string;
+  AccessToken?: string;
+  UserId?: string;
+  User?: {
+    Id?: string;
+  };
+  [key: string]: unknown;
+}
+
+export interface ConnectServer {
+  AccessKey: string;
+  SystemId: string;
+  Name: string;
+  Url?: string;
+  LocalAddress?: string;
+}
+
+export interface ConnectExchangeResponse {
+  LocalUserId: string;
+  AccessToken: string;
+}
+
 export interface LoginCredentials {
   serverUrl: string;
   username: string;

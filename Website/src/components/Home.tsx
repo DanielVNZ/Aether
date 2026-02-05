@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, memo, useCallback, useMemo, type ReactElement } from 'react';
+import { useState, useEffect, useRef, memo, useCallback, useMemo, type ReactElement, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { embyApi } from '../services/embyApi';
 import { tmdbApi } from '../services/tmdbApi';
@@ -32,18 +32,26 @@ const MediaCard = memo(({ item, size = 'normal', onItemClick, onToggleFavorite, 
     UserData: { ...(item.UserData || {}), IsFavorite: isFavorite },
   } as EmbyItem : item;
   
+  const isTvDevice = typeof document !== 'undefined' && document.body.classList.contains('tv-device');
+
   // For episodes, use the series cover art if available
   let imageUrl = '';
   if (item.Type === 'Episode' && item.SeriesId && item.SeriesPrimaryImageTag) {
-    imageUrl = embyApi.getImageUrl(item.SeriesId, 'Primary', { maxWidth: size === 'large' ? 360 : 260, tag: item.SeriesPrimaryImageTag });
+    imageUrl = embyApi.getImageUrl(item.SeriesId, 'Primary', {
+      maxWidth: size === 'large' ? (isTvDevice ? 300 : 360) : (isTvDevice ? 200 : 260),
+      tag: item.SeriesPrimaryImageTag
+    });
   } else if (item.ImageTags?.Primary) {
-    imageUrl = embyApi.getImageUrl(item.Id, 'Primary', { maxWidth: size === 'large' ? 360 : 260, tag: item.ImageTags.Primary });
+    imageUrl = embyApi.getImageUrl(item.Id, 'Primary', {
+      maxWidth: size === 'large' ? (isTvDevice ? 300 : 360) : (isTvDevice ? 200 : 260),
+      tag: item.ImageTags.Primary
+    });
   }
 
   // Responsive card widths - smaller on wider screens to fit more items
   const cardWidth = size === 'large' 
-    ? 'w-52 xl:w-44 2xl:w-40' 
-    : 'w-40 lg:w-36 xl:w-32 2xl:w-36';
+    ? (isTvDevice ? 'w-44' : 'w-52 xl:w-44 2xl:w-40')
+    : (isTvDevice ? 'w-32' : 'w-40 lg:w-36 xl:w-32 2xl:w-36');
 
   return (
     <div
@@ -169,7 +177,7 @@ const MediaCard = memo(({ item, size = 'normal', onItemClick, onToggleFavorite, 
 });
 
 // MediaRow component - defined outside Home
-const MediaRow = memo(({ title, items, icon, browseLink, subtitle, onItemClick, onBrowseClick, onToggleFavorite, favChanging, favoriteIds, onRemove }: { 
+const MediaRow = memo(({ title, items, icon, browseLink, subtitle, onItemClick, onBrowseClick, onToggleFavorite, favChanging, favoriteIds, onRemove, enableDragReorder, onReorder }: { 
   title: string; 
   items: EmbyItem[]; 
   icon?: React.ReactNode; 
@@ -181,10 +189,14 @@ const MediaRow = memo(({ title, items, icon, browseLink, subtitle, onItemClick, 
   favChanging?: Record<string, boolean>;
   favoriteIds?: Set<string>;
   onRemove?: () => void;
+  enableDragReorder?: boolean;
+  onReorder?: (fromIndex: number, toIndex: number) => void;
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
   const checkScrollButtons = () => {
     if (scrollContainerRef.current) {
@@ -290,16 +302,89 @@ const MediaRow = memo(({ title, items, icon, browseLink, subtitle, onItemClick, 
           role="list"
           aria-label={title}
         >
-          {items.map((item, index) => (
-            <MediaCard 
-              key={`${item.Id}-${index}`} 
-              item={item} 
-              onItemClick={onItemClick} 
-              onToggleFavorite={onToggleFavorite}
-              isFavChanging={!!favChanging?.[item.Type === 'Episode' && item.SeriesId ? item.SeriesId : item.Id]}
-              favoriteIds={favoriteIds}
-            />
-          ))}
+          {items.map((item, index) => {
+            const isDraggable = !!enableDragReorder && !document.body.classList.contains('tv-device');
+            const showPlaceholder = isDraggable && dragIndex !== null && dragOverIndex === index && dragIndex !== index;
+            return (
+              <div
+                key={`${item.Id}-${index}`}
+                className="flex"
+                onDragOver={(e) => {
+                  if (!isDraggable) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  setDragOverIndex(index);
+                }}
+                onDrop={(e) => {
+                  if (!isDraggable) return;
+                  e.preventDefault();
+                  const fromRaw = dragIndex ?? Number(e.dataTransfer.getData('text/plain'));
+                  if (Number.isNaN(fromRaw) || fromRaw === index) {
+                    setDragIndex(null);
+                    setDragOverIndex(null);
+                    return;
+                  }
+                  onReorder?.(fromRaw, index);
+                  setDragIndex(null);
+                  setDragOverIndex(null);
+                }}
+              >
+                {showPlaceholder && (
+                  <div className="flex-shrink-0 w-40 lg:w-36 xl:w-32 2xl:w-36 pointer-events-none">
+                    <div className="relative aspect-[2/3] rounded-xl border-2 border-dashed border-blue-500/70 bg-blue-500/10 mb-4" />
+                    <div className="h-3 w-3/4 bg-white/10 rounded mb-2" />
+                    <div className="h-3 w-1/2 bg-white/10 rounded" />
+                  </div>
+                )}
+                <div
+                  draggable={isDraggable}
+                  onDragStart={(e) => {
+                    if (!isDraggable) return;
+                    setDragIndex(index);
+                    setDragOverIndex(index);
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', String(index));
+                  }}
+                  onDragEnter={() => {
+                    if (!isDraggable) return;
+                    setDragOverIndex(index);
+                  }}
+                  onDragOver={(e) => {
+                    if (!isDraggable) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    setDragOverIndex(index);
+                  }}
+                  onDrop={(e) => {
+                    if (!isDraggable) return;
+                    e.preventDefault();
+                    const fromRaw = dragIndex ?? Number(e.dataTransfer.getData('text/plain'));
+                    if (Number.isNaN(fromRaw) || fromRaw === index) {
+                      setDragIndex(null);
+                      setDragOverIndex(null);
+                      return;
+                    }
+                    onReorder?.(fromRaw, index);
+                    setDragIndex(null);
+                    setDragOverIndex(null);
+                  }}
+                  onDragEnd={() => {
+                    setDragIndex(null);
+                    setDragOverIndex(null);
+                  }}
+                  className={isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}
+                >
+                  <MediaCard 
+                    item={item} 
+                    onItemClick={onItemClick} 
+                    onToggleFavorite={onToggleFavorite}
+                    isFavChanging={!!favChanging?.[item.Type === 'Episode' && item.SeriesId ? item.SeriesId : item.Id]}
+                    favoriteIds={favoriteIds}
+                  />
+                </div>
+              </div>
+            );
+          })}
           {/* Spacer to ensure last item isn't cut off */}
           <div className="flex-shrink-0 w-1" />
         </div>
@@ -317,6 +402,20 @@ const MediaRow = memo(({ title, items, icon, browseLink, subtitle, onItemClick, 
          prevProps.onRemove === nextProps.onRemove;
 });
 
+const RecommendationEmptyRow = ({ title, subtitle, message, icon }: { title: string; subtitle?: string; message: string; icon?: ReactNode }) => (
+  <div className="mb-16">
+    <div className="flex items-center gap-4 mb-6">
+      {icon && <div className="text-blue-500">{icon}</div>}
+      <h2 className="text-2xl font-bold text-white">{title}</h2>
+      {subtitle && <span className="text-xs text-gray-500 ml-1">{subtitle}</span>}
+      <div className="flex-1 h-px bg-gradient-to-r from-gray-800 to-transparent ml-6" />
+    </div>
+    <div className="rounded-2xl border border-white/10 bg-white/5 px-6 py-5 text-gray-400">
+      {message}
+    </div>
+  </div>
+);
+
 export function Home() {
   const navigate = useNavigate();
   const { logout } = useAuth();
@@ -325,6 +424,8 @@ export function Home() {
     'continue_movies',
     'continue_tv',
     'favorites',
+    'recommended_movies',
+    'recommended_series',
     'trending_movies',
     'popular_tv',
     'latest_movies',
@@ -335,6 +436,11 @@ export function Home() {
   const [resumeMovies, setResumeMovies] = useState<EmbyItem[]>([]);
   const [resumeSeries, setResumeSeries] = useState<EmbyItem[]>([]);
   const [favoriteItems, setFavoriteItems] = useState<EmbyItem[]>([]);
+  const [recommendedMovies, setRecommendedMovies] = useState<EmbyItem[]>([]);
+  const [recommendedSeries, setRecommendedSeries] = useState<EmbyItem[]>([]);
+  const [recommendationStatus, setRecommendationStatus] = useState<'loading' | 'no_stats' | 'no_genres' | 'no_results' | 'ready' | null>(null);
+  const [latestStatus, setLatestStatus] = useState<'idle' | 'loading' | 'loaded'>('idle');
+  const [popularStatus, setPopularStatus] = useState<'idle' | 'loading' | 'loaded'>('idle');
   const [favChanging, setFavChanging] = useState<Record<string, boolean>>({});
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track if this is first load
   const [showContent, setShowContent] = useState(false); // Track content fade in
@@ -362,8 +468,18 @@ export function Home() {
   const [customSectionItems, setCustomSectionItems] = useState<Record<string, EmbyItem[]>>({});
   const normalizeFavoritesOrder = (items: EmbyItem[]) => items.slice().reverse();
   const favoriteIds = useMemo(() => new Set(favoriteItems.map(it => it.Id)), [favoriteItems]);
+  const canDragFavorites = typeof document !== 'undefined' && !document.body.classList.contains('tv-device');
+  const latestMoviesRef = useRef<HTMLDivElement | null>(null);
+  const latestEpisodesRef = useRef<HTMLDivElement | null>(null);
+  const popularMoviesRef = useRef<HTMLDivElement | null>(null);
+  const popularTvRef = useRef<HTMLDivElement | null>(null);
+  const recommendedMoviesRef = useRef<HTMLDivElement | null>(null);
+  const recommendedSeriesRef = useRef<HTMLDivElement | null>(null);
+  const hasWarmCacheRef = useRef(false);
 
   const HOME_SECTIONS_KEY = 'home_customSections';
+  const HOME_CACHE_REFRESH_KEY = 'home_cache_last_refresh';
+  const HOME_CACHE_TTL_MS = 10 * 60 * 1000;
   const DEFAULT_FILTERS = {
     sortBy: 'PremiereDate',
     sortOrder: 'Descending',
@@ -378,19 +494,53 @@ export function Home() {
     return { ...it, UserData: { ...prevUD, IsFavorite: nextFav } };
   });
 
+  const heroBackdropUrl = featuredItem?.BackdropImageTags?.[0]
+    ? embyApi.getImageUrl(featuredItem.Id, 'Backdrop', { maxWidth: 1280, tag: featuredItem.BackdropImageTags[0] })
+    : featuredItem?.ImageTags?.Primary
+    ? embyApi.getImageUrl(featuredItem.Id, 'Primary', { maxWidth: 1280, tag: featuredItem.ImageTags.Primary })
+    : '';
+
+
   // Load cached data from sessionStorage immediately on mount
   useEffect(() => {
+    const now = Date.now();
+    const lastRefreshRaw = localStorage.getItem(HOME_CACHE_REFRESH_KEY);
+    const lastRefresh = lastRefreshRaw ? Number(lastRefreshRaw) : Number.NaN;
+    const isCacheStale = Number.isNaN(lastRefresh) ? false : now - lastRefresh > HOME_CACHE_TTL_MS;
+
+    if (isCacheStale) {
+      // Skip warm cache: next Home load performs a full refresh.
+      hasWarmCacheRef.current = false;
+      return;
+    }
+
+    const cachedResumeMovies = sessionStorage.getItem('home_resumeMovies');
     const cachedMovies = sessionStorage.getItem('home_latestMovies');
     const cachedEpisodes = sessionStorage.getItem('home_latestEpisodes');
     const cachedPopularMovies = sessionStorage.getItem('popular_movies_all');
     const cachedPopularTV = sessionStorage.getItem('popular_tv_all');
     const cachedFavorites = sessionStorage.getItem('home_favorites');
+    const cachedResumeSeries = sessionStorage.getItem('home_resumeSeries');
+    const cachedFeaturedItems = sessionStorage.getItem('home_featuredItems');
+    const cachedRecommendedMovies = sessionStorage.getItem('home_recommendedMovies');
+    const cachedRecommendedSeries = sessionStorage.getItem('home_recommendedSeries');
+    const cachedRecommendationStatus = sessionStorage.getItem('home_recommendationStatus');
 
     let hasCache = false;
+
+    if (cachedResumeMovies) {
+      try {
+        setResumeMovies(JSON.parse(cachedResumeMovies));
+        hasCache = true;
+      } catch (e) {
+        console.error('Failed to parse cached resume movies:', e);
+      }
+    }
 
     if (cachedMovies) {
       try {
         setLatestMovies(JSON.parse(cachedMovies));
+        setLatestStatus('loaded');
         hasCache = true;
       } catch (e) {
         console.error('Failed to parse cached movies:', e);
@@ -400,6 +550,7 @@ export function Home() {
     if (cachedEpisodes) {
       try {
         setLatestEpisodes(JSON.parse(cachedEpisodes));
+        setLatestStatus('loaded');
         hasCache = true;
       } catch (e) {
         console.error('Failed to parse cached episodes:', e);
@@ -416,12 +567,59 @@ export function Home() {
       }
     }
 
+    if (cachedResumeSeries) {
+      try {
+        setResumeSeries(JSON.parse(cachedResumeSeries));
+        hasCache = true;
+      } catch (e) {
+        console.error('Failed to parse cached resume series:', e);
+      }
+    }
+
+    if (cachedFeaturedItems) {
+      try {
+        const parsed = JSON.parse(cachedFeaturedItems) as EmbyItem[];
+        if (parsed.length > 0) {
+          setFeaturedItems(parsed);
+          setFeaturedItem(parsed[0]);
+          hasCache = true;
+        }
+      } catch (e) {
+        console.error('Failed to parse cached featured items:', e);
+      }
+    }
+
+    if (cachedRecommendedMovies) {
+      try {
+        setRecommendedMovies(JSON.parse(cachedRecommendedMovies));
+      } catch (e) {
+        console.error('Failed to parse cached recommended movies:', e);
+      }
+    }
+
+    if (cachedRecommendedSeries) {
+      try {
+        setRecommendedSeries(JSON.parse(cachedRecommendedSeries));
+      } catch (e) {
+        console.error('Failed to parse cached recommended series:', e);
+      }
+    }
+
+    if (cachedRecommendationStatus) {
+      try {
+        setRecommendationStatus(JSON.parse(cachedRecommendationStatus));
+      } catch (e) {
+        console.error('Failed to parse cached recommendation status:', e);
+      }
+    }
+
     // Only use cached TMDB-popular rows if an API key is configured; otherwise clear any stale cache
     if (tmdbApi.isConfigured()) {
       if (cachedPopularMovies) {
         try {
           const all = JSON.parse(cachedPopularMovies) as EmbyItem[];
           setPopularMovies(all.slice(0, 15));
+          setPopularStatus('loaded');
           hasCache = true;
         } catch (e) {
           console.error('Failed to parse cached popular movies:', e);
@@ -431,6 +629,7 @@ export function Home() {
         try {
           const all = JSON.parse(cachedPopularTV) as EmbyItem[];
           setPopularTVShows(all.slice(0, 15));
+          setPopularStatus('loaded');
           hasCache = true;
         } catch (e) {
           console.error('Failed to parse cached popular TV:', e);
@@ -440,6 +639,7 @@ export function Home() {
       // No API key: ensure popular sections are cleared and cache removed
       setPopularMovies([]);
       setPopularTVShows([]);
+      setPopularStatus('loaded');
       sessionStorage.removeItem('popular_movies_all');
       sessionStorage.removeItem('popular_tv_all');
       localStorage.setItem('emby_hasPopularMovies', 'false');
@@ -448,6 +648,7 @@ export function Home() {
 
     // If we have cached data, hide loading immediately
     if (hasCache) {
+      hasWarmCacheRef.current = true;
       setIsInitialLoad(false);
     }
   }, []);
@@ -455,6 +656,118 @@ export function Home() {
   useEffect(() => {
     loadData();
   }, []);
+
+  const loadRecommendations = useCallback(async () => {
+    try {
+      if (recommendationStatus === 'loading' || recommendationStatus === 'ready') return;
+      setRecommendationStatus('loading');
+      const [playedMovies, playedEpisodes] = await Promise.all([
+        embyApi.getItems({
+          recursive: true,
+          includeItemTypes: 'Movie',
+          filters: 'IsPlayed',
+          fields: 'Genres,UserData',
+        }),
+        embyApi.getItems({
+          recursive: true,
+          includeItemTypes: 'Episode',
+          filters: 'IsPlayed',
+          fields: 'Genres,UserData',
+        }),
+      ]);
+
+      const totalPlayed = playedMovies.TotalRecordCount + playedEpisodes.TotalRecordCount;
+      if (totalPlayed === 0) {
+        setRecommendationStatus('no_stats');
+        setRecommendedMovies([]);
+        setRecommendedSeries([]);
+        sessionStorage.setItem('home_recommendationStatus', JSON.stringify('no_stats'));
+        return;
+      }
+
+      const genreCount: Record<string, number> = {};
+      playedMovies.Items.forEach((movie) => {
+        movie.Genres?.forEach((genre) => {
+          genreCount[genre] = (genreCount[genre] || 0) + 1;
+        });
+      });
+      playedEpisodes.Items.forEach((episode) => {
+        episode.Genres?.forEach((genre) => {
+          genreCount[genre] = (genreCount[genre] || 0) + 1;
+        });
+      });
+
+      const topGenres = Object.entries(genreCount)
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 3)
+        .map((g) => g.name);
+
+      if (topGenres.length === 0) {
+        setRecommendationStatus('no_genres');
+        setRecommendedMovies([]);
+        setRecommendedSeries([]);
+        sessionStorage.setItem('home_recommendationStatus', JSON.stringify('no_genres'));
+        return;
+      }
+
+      setRecommendationStatus('ready');
+      sessionStorage.setItem('home_recommendationStatus', JSON.stringify('ready'));
+
+      const fetchRecommendations = async (genres?: string[]) => {
+        const genreParam = genres && genres.length > 0 ? genres.join(',') : undefined;
+        const [recMoviesRes, recSeriesRes] = await Promise.all([
+          embyApi.getItems({
+            recursive: true,
+            includeItemTypes: 'Movie',
+            ...(genreParam ? { genres: genreParam } : {}),
+            limit: 80,
+            sortBy: 'CommunityRating,PremiereDate',
+            sortOrder: 'Descending',
+            fields: 'Genres,Overview,CommunityRating,OfficialRating,RunTimeTicks,ProductionYear,PremiereDate,UserData,ProviderIds',
+          }),
+          embyApi.getItems({
+            recursive: true,
+            includeItemTypes: 'Series',
+            ...(genreParam ? { genres: genreParam } : {}),
+            limit: 80,
+            sortBy: 'CommunityRating,PremiereDate',
+            sortOrder: 'Descending',
+            fields: 'Genres,Overview,CommunityRating,OfficialRating,RunTimeTicks,ProductionYear,PremiereDate,Studios,ChildCount,SeasonCount,ProviderIds,UserData',
+          }),
+        ]);
+
+        const dedupedMovies = deduplicateItems(recMoviesRes.Items)
+          .filter((item) => item.UserData?.Played !== true)
+          .slice(0, 20);
+        const dedupedSeries = deduplicateItems(recSeriesRes.Items)
+          .filter((item) => item.UserData?.Played !== true)
+          .slice(0, 20);
+
+        return { dedupedMovies, dedupedSeries };
+      };
+
+      let recResult = await fetchRecommendations(topGenres);
+      if (recResult.dedupedMovies.length === 0 && recResult.dedupedSeries.length === 0 && topGenres.length > 1) {
+        recResult = await fetchRecommendations([topGenres[0]]);
+      }
+      if (recResult.dedupedMovies.length === 0 && recResult.dedupedSeries.length === 0) {
+        recResult = await fetchRecommendations();
+      }
+
+      setRecommendedMovies(recResult.dedupedMovies);
+      setRecommendedSeries(recResult.dedupedSeries);
+      sessionStorage.setItem('home_recommendedMovies', JSON.stringify(recResult.dedupedMovies));
+      sessionStorage.setItem('home_recommendedSeries', JSON.stringify(recResult.dedupedSeries));
+      if (recResult.dedupedMovies.length === 0 && recResult.dedupedSeries.length === 0) {
+        setRecommendationStatus('no_results');
+        sessionStorage.setItem('home_recommendationStatus', JSON.stringify('no_results'));
+      }
+    } catch (error) {
+      console.error('Failed to load recommendations:', error);
+      setRecommendationStatus('no_stats');
+    }
+  }, [recommendationStatus]);
 
   const loadCustomSections = useCallback(async () => {
     let sections: { id: string; name: string; filters: any; searchTerm: string; mediaType: string; }[] = [];
@@ -566,6 +879,84 @@ export function Home() {
     }
   }, []);
 
+  const loadLatestContent = useCallback(async () => {
+    if (latestStatus !== 'idle') return;
+    try {
+      setLatestStatus('loading');
+      const [movies, episodes] = await Promise.all([
+        embyApi.getItems({ 
+          recursive: true, 
+          includeItemTypes: 'Movie', 
+          limit: 50, 
+          sortBy: 'ProductionYear,PremiereDate', 
+          sortOrder: 'Descending' 
+        }),
+        embyApi.getItems({ 
+          recursive: true, 
+          includeItemTypes: 'Episode', 
+          limit: 50, 
+          sortBy: 'PremiereDate', 
+          sortOrder: 'Descending' 
+        }),
+      ]);
+
+      const deduplicatedMovies = deduplicateItems(movies.Items);
+      setLatestMovies(deduplicatedMovies);
+
+      const seenEpisodeIds = new Set<string>();
+      const uniqueEpisodes = episodes.Items.filter(ep => {
+        if (seenEpisodeIds.has(ep.Id)) return false;
+        seenEpisodeIds.add(ep.Id);
+        return true;
+      });
+      setLatestEpisodes(uniqueEpisodes);
+
+      sessionStorage.setItem('home_latestMovies', JSON.stringify(deduplicatedMovies));
+      sessionStorage.setItem('home_latestEpisodes', JSON.stringify(uniqueEpisodes));
+      setLatestStatus('loaded');
+    } catch (error) {
+      console.error('Failed to load latest content:', error);
+      setLatestStatus('loaded');
+    }
+  }, [latestStatus]);
+
+  const loadPopularIfNeeded = useCallback(async () => {
+    if (popularStatus !== 'idle') return;
+    setPopularStatus('loading');
+    await loadPopularContent();
+    setPopularStatus('loaded');
+  }, [popularStatus]);
+
+  useEffect(() => {
+    const targets: Array<{ ref: React.RefObject<HTMLDivElement | null>; onEnter: () => void }> = [
+      { ref: latestMoviesRef, onEnter: loadLatestContent },
+      { ref: latestEpisodesRef, onEnter: loadLatestContent },
+      { ref: popularMoviesRef, onEnter: loadPopularIfNeeded },
+      { ref: popularTvRef, onEnter: loadPopularIfNeeded },
+      { ref: recommendedMoviesRef, onEnter: loadRecommendations },
+      { ref: recommendedSeriesRef, onEnter: loadRecommendations },
+    ];
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          const match = targets.find((t) => t.ref.current === entry.target);
+          if (match) {
+            match.onEnter();
+          }
+        });
+      },
+      { root: null, rootMargin: '600px 0px', threshold: 0.01 }
+    );
+
+    targets.forEach(({ ref }) => {
+      if (ref.current) observer.observe(ref.current);
+    });
+
+    return () => observer.disconnect();
+  }, [loadLatestContent, loadPopularIfNeeded, loadRecommendations]);
+
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
       if (e.key === HOME_SECTIONS_KEY) {
@@ -632,26 +1023,12 @@ export function Home() {
   const loadData = async () => {
     try {
       // Keep loading screen visible until all essential data loads
-      setIsInitialLoad(true);
+      if (!hasWarmCacheRef.current) {
+        setIsInitialLoad(true);
+      }
       
-      // Fetch all data in parallel
-      const [movies, episodes, resumeMovies, resumeEpisodes, recentlyPlayedEpisodes, favorites] = await Promise.all([
-        // Latest movies by production year
-        embyApi.getItems({ 
-          recursive: true, 
-          includeItemTypes: 'Movie', 
-          limit: 50, 
-          sortBy: 'ProductionYear,PremiereDate', 
-          sortOrder: 'Descending' 
-        }),
-        // Latest episodes by premiere/release date
-        embyApi.getItems({ 
-          recursive: true, 
-          includeItemTypes: 'Episode', 
-          limit: 50, 
-          sortBy: 'PremiereDate', 
-          sortOrder: 'Descending' 
-        }),
+      // Fetch essential data in parallel
+      const [resumeMovies, resumeEpisodes, recentlyPlayedEpisodes, favorites] = await Promise.all([
         // Resumable movies (partially watched) - sorted by DatePlayed
         embyApi.getItems({ 
           recursive: true, 
@@ -693,23 +1070,6 @@ export function Home() {
           fields: 'Genres,Overview,CommunityRating,OfficialRating,RunTimeTicks,ProductionYear,PremiereDate,UserData,SeriesId,SeriesName,SeriesPrimaryImageTag,ParentIndexNumber,IndexNumber,ChildCount,ProviderIds'
         }),
       ]);
-
-      // Deduplicate movies that exist in multiple libraries
-      const deduplicatedMovies = deduplicateItems(movies.Items);
-      setLatestMovies(deduplicatedMovies);
-      
-      // Deduplicate episodes by ID (same episode can appear from different library sources)
-      const seenEpisodeIds = new Set<string>();
-      const uniqueEpisodes = episodes.Items.filter(ep => {
-        if (seenEpisodeIds.has(ep.Id)) return false;
-        seenEpisodeIds.add(ep.Id);
-        return true;
-      });
-      setLatestEpisodes(uniqueEpisodes);
-
-      // Cache movies and episodes in sessionStorage for instant loading on return
-      sessionStorage.setItem('home_latestMovies', JSON.stringify(deduplicatedMovies));
-      sessionStorage.setItem('home_latestEpisodes', JSON.stringify(uniqueEpisodes));
 
       const favoritesItems = favorites.Items || [];
       const orderedFavorites = normalizeFavoritesOrder(favoritesItems);
@@ -853,14 +1213,21 @@ export function Home() {
       
       // Movies are already sorted by DatePlayed from API, deduplicate them
       // Set separate states for movies and series
-      setResumeMovies(deduplicateItems(resumeMovies.Items));
+      const dedupedResumeMovies = deduplicateItems(resumeMovies.Items);
+      setResumeMovies(dedupedResumeMovies);
       setResumeSeries(uniqueProcessedEpisodes);
+      try {
+        sessionStorage.setItem('home_resumeMovies', JSON.stringify(dedupedResumeMovies));
+        sessionStorage.setItem('home_resumeSeries', JSON.stringify(uniqueProcessedEpisodes));
+        localStorage.setItem(HOME_CACHE_REFRESH_KEY, String(Date.now()));
+      } catch (e) {
+        // ignore cache errors
+      }
       
       // Load featured items in parallel, don't wait for it
       loadFeaturedItems();
       
-      // Load TMDB popular content if API key is configured
-      loadPopularContent();
+      // Defer popular content + recommendations until visible
       
       // Mark initial load as complete immediately after essential content is ready
       setIsInitialLoad(false);
@@ -1080,15 +1447,11 @@ export function Home() {
   }, [navigate]);
 
   // Trigger content fade in after initial load completes
-  if (!showContent) {
-    setTimeout(() => setShowContent(true), 50);
-  }
-
-  const heroBackdropUrl = featuredItem?.BackdropImageTags?.[0]
-    ? embyApi.getImageUrl(featuredItem.Id, 'Backdrop', { maxWidth: 1280, tag: featuredItem.BackdropImageTags[0] })
-    : featuredItem?.ImageTags?.Primary
-    ? embyApi.getImageUrl(featuredItem.Id, 'Primary', { maxWidth: 1280, tag: featuredItem.ImageTags.Primary })
-    : '';
+  useEffect(() => {
+    if (showContent) return;
+    const t = setTimeout(() => setShowContent(true), 50);
+    return () => clearTimeout(t);
+  }, [showContent]);
 
   const savedHomeSectionOrder = (() => {
     const saved = localStorage.getItem('emby_homeSectionOrder');
@@ -1190,7 +1553,10 @@ export function Home() {
 
       {/* Hero Section */}
       {showFeatured && isInitialLoad && (
-        <div className="relative h-[80vh] sm:h-[70vh] md:h-[80vh] min-h-[400px] sm:min-h-[450px] md:min-h-[560px] overflow-hidden z-10 tv-hero home-hero">
+        <div
+          className="relative h-[80vh] sm:h-[70vh] md:h-[80vh] min-h-[400px] sm:min-h-[450px] md:min-h-[560px] overflow-hidden z-10 tv-hero home-hero"
+          data-tv-section="home-hero"
+        >
           <div className="absolute inset-0 bg-gradient-to-r from-gray-950 via-gray-950/90 to-gray-950/60" />
           <div className="absolute inset-0 bg-gradient-to-t from-gray-950 via-transparent to-gray-900/30" />
           <div className="relative h-full max-w-[1600px] mx-auto px-4 sm:px-6 md:px-8 flex items-center">
@@ -1215,7 +1581,10 @@ export function Home() {
         </div>
       )}
       {showFeatured && !isInitialLoad && featuredItem && (
-        <div className="relative h-[80vh] sm:h-[70vh] md:h-[80vh] min-h-[400px] sm:min-h-[450px] md:min-h-[560px] overflow-hidden z-10 tv-hero home-hero">
+        <div
+          className="relative h-[80vh] sm:h-[70vh] md:h-[80vh] min-h-[400px] sm:min-h-[450px] md:min-h-[560px] overflow-hidden z-10 tv-hero home-hero"
+          data-tv-section="home-hero"
+        >
           {/* Hero Content */}
           <div className="relative h-full max-w-[1600px] mx-auto px-4 sm:px-6 md:px-8 flex items-center">
             <div className="max-w-3xl pt-16 sm:pt-20">
@@ -1233,10 +1602,26 @@ export function Home() {
                 )}
               </div>
               
-              <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-3 sm:mb-5 leading-tight tv-hero-title">{featuredItem.Name}</h2>
+              <h2
+                className={`font-bold text-white mb-3 sm:mb-5 leading-tight tv-hero-title ${
+                  document.body.classList.contains('tv-device')
+                    ? 'text-lg sm:text-xl md:text-2xl lg:text-3xl'
+                    : 'text-3xl sm:text-4xl md:text-5xl lg:text-6xl'
+                }`}
+              >
+                {featuredItem.Name}
+              </h2>
               
               {featuredItem.Overview && (
-                <p className="text-gray-200 text-sm sm:text-lg md:text-xl leading-relaxed mb-4 sm:mb-6 md:mb-8 line-clamp-2 sm:line-clamp-3 tv-hero-overview">{featuredItem.Overview}</p>
+                <p
+                  className={`text-gray-200 leading-relaxed mb-4 sm:mb-6 md:mb-8 line-clamp-2 sm:line-clamp-3 tv-hero-overview ${
+                    document.body.classList.contains('tv-device')
+                      ? 'text-[11px] sm:text-xs md:text-sm'
+                      : 'text-sm sm:text-lg md:text-xl'
+                  }`}
+                >
+                  {featuredItem.Overview}
+                </p>
               )}
               
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-5">
@@ -1264,7 +1649,13 @@ export function Home() {
       )}
 
       {/* Main Content */}
-      <main className={`max-w-[1600px] mx-auto px-4 sm:px-6 md:px-8 home-main ${showFeatured && featuredItem ? '-mt-8 sm:-mt-16 md:-mt-28 relative z-10' : 'pt-16 sm:pt-20 md:pt-28'}`}>
+      <main
+        className={`max-w-[1600px] mx-auto px-4 sm:px-6 md:px-8 home-main ${showFeatured && featuredItem ? '-mt-8 sm:-mt-16 md:-mt-28 relative z-10' : 'pt-16 sm:pt-20 md:pt-28'}`}
+        data-tv-section="home-rows"
+      >
+        <div className="mb-6 rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-sm text-gray-300">
+          Tip: You can reorder home rows in Settings.
+        </div>
         {isInitialLoad ? (
           <div className="space-y-16">
             {Array.from({ length: 4 }).map((_, rowIndex) => (
@@ -1345,6 +1736,16 @@ export function Home() {
                   onToggleFavorite={toggleFavorite}
                   favChanging={favChanging}
                   favoriteIds={favoriteIds}
+                  enableDragReorder={canDragFavorites}
+                  onReorder={(fromIndex, toIndex) => {
+                    setFavoriteItems((prev) => {
+                      const next = [...prev];
+                      const [moved] = next.splice(fromIndex, 1);
+                      next.splice(toIndex, 0, moved);
+                      sessionStorage.setItem('home_favorites', JSON.stringify(next));
+                      return next;
+                    });
+                  }}
                   icon={
                     <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                       <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
@@ -1354,85 +1755,241 @@ export function Home() {
               ) : null
             },
             {
+              id: 'recommended_movies',
+              element: (
+                <div ref={recommendedMoviesRef}>
+                  {recommendedMovies.length > 0 ? (
+                    <MediaRow
+                      title="Recommended Movies"
+                      items={recommendedMovies}
+                      subtitle="Built from your statistics"
+                      onItemClick={handleItemClick}
+                      onBrowseClick={handleBrowseClick}
+                      onToggleFavorite={toggleFavorite}
+                      favChanging={favChanging}
+                      favoriteIds={favoriteIds}
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l2.09 4.26L19 8l-3.5 3.42L16.18 16 12 13.8 7.82 16l.68-4.58L5 8l4.91-.74L12 3z" />
+                        </svg>
+                      }
+                    />
+                  ) : recommendationStatus === null || recommendationStatus === 'loading' ? (
+                    <RecommendationEmptyRow
+                      title="Recommended Movies"
+                      subtitle="Built from your statistics"
+                      message="Loading..."
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l2.09 4.26L19 8l-3.5 3.42L16.18 16 12 13.8 7.82 16l.68-4.58L5 8l4.91-.74L12 3z" />
+                        </svg>
+                      }
+                    />
+                  ) : (
+                    <RecommendationEmptyRow
+                      title="Recommended Movies"
+                      subtitle="Built from your statistics"
+                      message={
+                        recommendationStatus === 'no_stats'
+                          ? 'Start watching to populate.'
+                          : recommendationStatus === 'no_genres'
+                          ? 'We need genre data from your watched items to build recommendations.'
+                          : recommendationStatus === 'no_results'
+                          ? 'No unwatched matches in your top genres yet.'
+                          : 'Start watching more to refine your recommendations.'
+                      }
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l2.09 4.26L19 8l-3.5 3.42L16.18 16 12 13.8 7.82 16l.68-4.58L5 8l4.91-.74L12 3z" />
+                        </svg>
+                      }
+                    />
+                  )}
+                </div>
+              )
+            },
+            {
+              id: 'recommended_series',
+              element: (
+                <div ref={recommendedSeriesRef}>
+                  {recommendedSeries.length > 0 ? (
+                    <MediaRow
+                      title="Recommended Series"
+                      items={recommendedSeries}
+                      subtitle="Built from your statistics"
+                      onItemClick={handleItemClick}
+                      onBrowseClick={handleBrowseClick}
+                      onToggleFavorite={toggleFavorite}
+                      favChanging={favChanging}
+                      favoriteIds={favoriteIds}
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h18M5 7v10a2 2 0 002 2h10a2 2 0 002-2V7M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2" />
+                        </svg>
+                      }
+                    />
+                  ) : recommendationStatus === null || recommendationStatus === 'loading' ? (
+                    <RecommendationEmptyRow
+                      title="Recommended Series"
+                      subtitle="Built from your statistics"
+                      message="Loading..."
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h18M5 7v10a2 2 0 002 2h10a2 2 0 002-2V7M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2" />
+                        </svg>
+                      }
+                    />
+                  ) : (
+                    <RecommendationEmptyRow
+                      title="Recommended Series"
+                      subtitle="Built from your statistics"
+                      message={
+                        recommendationStatus === 'no_stats'
+                          ? 'Start watching to populate.'
+                          : recommendationStatus === 'no_genres'
+                          ? 'We need genre data from your watched items to build recommendations.'
+                          : recommendationStatus === 'no_results'
+                          ? 'No unwatched matches in your top genres yet.'
+                          : 'Start watching more to refine your recommendations.'
+                      }
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h18M5 7v10a2 2 0 002 2h10a2 2 0 002-2V7M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2" />
+                        </svg>
+                      }
+                    />
+                  )}
+                </div>
+              )
+            },
+            {
               id: 'trending_movies',
-              element: popularMovies.length > 0 ? (
-                <MediaRow
-                  title="Trending Movies"
-                  items={popularMovies}
-                  browseLink="/popular/movies"
-                  subtitle="Powered by TMDB"
-                  onItemClick={handleItemClick}
-                  onBrowseClick={handleBrowseClick}
-                  onToggleFavorite={toggleFavorite}
-                  favChanging={favChanging}
-                  favoriteIds={favoriteIds}
-                  icon={
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                    </svg>
-                  }
-                />
-              ) : null
+              element: (
+                <div ref={popularMoviesRef}>
+                  {popularStatus === 'loaded' && popularMovies.length > 0 ? (
+                    <MediaRow
+                      title="Trending Movies"
+                      items={popularMovies}
+                      browseLink="/popular/movies"
+                      subtitle="Powered by TMDB"
+                      onItemClick={handleItemClick}
+                      onBrowseClick={handleBrowseClick}
+                      onToggleFavorite={toggleFavorite}
+                      favChanging={favChanging}
+                      favoriteIds={favoriteIds}
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                        </svg>
+                      }
+                    />
+                  ) : popularStatus === 'loaded' ? null : (
+                    <RecommendationEmptyRow
+                      title="Trending Movies"
+                      subtitle="Powered by TMDB"
+                      message="Loading..."
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                        </svg>
+                      }
+                    />
+                  )}
+                </div>
+              )
             },
             {
               id: 'popular_tv',
-              element: popularTVShows.length > 0 ? (
-                <MediaRow
-                  title="Popular TV Shows"
-                  items={popularTVShows}
-                  browseLink="/popular/tv"
-                  subtitle="Powered by TMDB"
-                  onItemClick={handleItemClick}
-                  onBrowseClick={handleBrowseClick}
-                  onToggleFavorite={toggleFavorite}
-                  favChanging={favChanging}
-                  favoriteIds={favoriteIds}
-                  icon={
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                    </svg>
-                  }
-                />
-              ) : null
+              element: (
+                <div ref={popularTvRef}>
+                  {popularStatus === 'loaded' && popularTVShows.length > 0 ? (
+                    <MediaRow
+                      title="Popular TV Shows"
+                      items={popularTVShows}
+                      browseLink="/popular/tv"
+                      subtitle="Powered by TMDB"
+                      onItemClick={handleItemClick}
+                      onBrowseClick={handleBrowseClick}
+                      onToggleFavorite={toggleFavorite}
+                      favChanging={favChanging}
+                      favoriteIds={favoriteIds}
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                        </svg>
+                      }
+                    />
+                  ) : popularStatus === 'loaded' ? null : (
+                    <RecommendationEmptyRow
+                      title="Popular TV Shows"
+                      subtitle="Powered by TMDB"
+                      message="Loading..."
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                        </svg>
+                      }
+                    />
+                  )}
+                </div>
+              )
             },
             {
               id: 'latest_movies',
               element: (
-                <MediaRow
-                  title="Latest Movies"
-                  items={latestMovies}
-                  browseLink="/browse?type=Movie"
-                  onItemClick={handleItemClick}
-                  onBrowseClick={handleBrowseClick}
-                  onToggleFavorite={toggleFavorite}
-                  favChanging={favChanging}
-                  favoriteIds={favoriteIds}
-                  icon={
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
-                    </svg>
-                  }
-                />
+                <div ref={latestMoviesRef}>
+                  {latestStatus === 'loaded' ? (
+                    <MediaRow
+                      title="Latest Movies"
+                      items={latestMovies}
+                      browseLink="/browse?type=Movie"
+                      onItemClick={handleItemClick}
+                      onBrowseClick={handleBrowseClick}
+                      onToggleFavorite={toggleFavorite}
+                      favChanging={favChanging}
+                      favoriteIds={favoriteIds}
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+                        </svg>
+                      }
+                    />
+                  ) : (
+                    <RecommendationEmptyRow
+                      title="Latest Movies"
+                      message="Loading..."
+                    />
+                  )}
+                </div>
               )
             },
             {
               id: 'latest_episodes',
               element: (
-                <MediaRow
-                  title="Latest Episodes"
-                  items={latestEpisodes}
-                  browseLink="/browse?type=Series"
-                  onItemClick={handleItemClick}
-                  onBrowseClick={handleBrowseClick}
-                  onToggleFavorite={toggleFavorite}
-                  favChanging={favChanging}
-                  favoriteIds={favoriteIds}
-                  icon={
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                    </svg>
-                  }
-                />
+                <div ref={latestEpisodesRef}>
+                  {latestStatus === 'loaded' ? (
+                    <MediaRow
+                      title="Latest Episodes"
+                      items={latestEpisodes}
+                      browseLink="/browse?type=Series"
+                      onItemClick={handleItemClick}
+                      onBrowseClick={handleBrowseClick}
+                      onToggleFavorite={toggleFavorite}
+                      favChanging={favChanging}
+                      favoriteIds={favoriteIds}
+                      icon={
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                      }
+                    />
+                  ) : (
+                    <RecommendationEmptyRow
+                      title="Latest Episodes"
+                      message="Loading..."
+                    />
+                  )}
+                </div>
               )
             },
             ...customSections.map(section => ({

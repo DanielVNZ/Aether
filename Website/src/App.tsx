@@ -6,6 +6,7 @@ import { AppFallbackSkeleton } from './components/AppFallbackSkeleton';
 
 // Lazy load all route components for better initial load
 const Login = lazy(() => import('./components/Login').then(m => ({ default: m.Login })));
+const ConnectServers = lazy(() => import('./components/ConnectServers').then(m => ({ default: m.ConnectServers })));
 const Home = lazy(() => import('./components/Home').then(m => ({ default: m.Home })));
 const Library = lazy(() => import('./components/Library').then(m => ({ default: m.Library })));
 const Browse = lazy(() => import('./components/Browse').then(m => ({ default: m.Browse })));
@@ -34,6 +35,7 @@ function App() {
       <Suspense fallback={<AppFallbackSkeleton />}>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/connect" element={<ConnectServers />} />
           <Route
             path="/home"
             element={

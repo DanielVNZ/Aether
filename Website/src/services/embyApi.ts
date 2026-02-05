@@ -5,6 +5,9 @@ import type {
   PlaybackInfoResponse,
   ServerInfo,
   StoredAuth,
+  ConnectAuthResponse,
+  ConnectServer,
+  ConnectExchangeResponse,
 } from '../types/emby.types';
 
 class EmbyApiService {
@@ -14,6 +17,7 @@ class EmbyApiService {
   private deviceId: string = '';
   private cache: Map<string, { data: any; timestamp: number }> = new Map();
   private cacheTTL: number = 5 * 60 * 1000; // 5 minutes cache
+  private connectBaseUrl: string = 'https://connect.emby.media/service';
 
   constructor() {
     // Generate or retrieve device ID
@@ -67,7 +71,7 @@ class EmbyApiService {
   private getAuthHeaders(includeToken: boolean = true): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      Authorization: `Emby UserId="${this.userId}", Client="Web", Device="Chrome", DeviceId="${this.deviceId}", Version="1.0.0"`,
+      Authorization: this.getEmbyAuthorizationHeaderValue(this.userId),
     };
 
     if (includeToken && this.accessToken) {
@@ -75,6 +79,30 @@ class EmbyApiService {
     }
 
     return headers;
+  }
+
+  private getEmbyAuthorizationHeaderValue(userId: string): string {
+    return `Emby UserId="${userId}", Client="Web", Device="Chrome", DeviceId="${this.deviceId}", Version="1.0.0"`;
+  }
+
+  private async connectRequest<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<T> {
+    const response = await fetch(`${this.connectBaseUrl}${endpoint}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Application': 'Aether/1.0.0',
+        ...options.headers,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Connect request failed: ${response.statusText}`);
+    }
+
+    return response.json();
   }
 
   private async request<T>(
@@ -108,6 +136,14 @@ class EmbyApiService {
     return JSON.parse(text);
   }
 
+  private normalizeServerUrl(serverUrl: string): string {
+    const trimmed = serverUrl.replace(/\/+$/, '');
+    if (trimmed.toLowerCase().endsWith('/emby')) {
+      return trimmed.slice(0, -5);
+    }
+    return trimmed;
+  }
+
   // Authentication methods
   async getPublicUsers(serverUrl: string): Promise<EmbyUser[]> {
     this.baseUrl = serverUrl;
@@ -139,6 +175,58 @@ class EmbyApiService {
     this.userId = response.User.Id;
 
     return response;
+  }
+
+  async connectAuthenticate(
+    usernameOrEmail: string,
+    password: string
+  ): Promise<ConnectAuthResponse> {
+    return this.connectRequest<ConnectAuthResponse>('/user/authenticate', {
+      method: 'POST',
+      body: JSON.stringify({
+        nameOrEmail: usernameOrEmail,
+        rawpw: password,
+      }),
+    });
+  }
+
+  async connectGetServers(
+    connectUserId: string,
+    connectAccessToken: string
+  ): Promise<ConnectServer[]> {
+    return this.connectRequest<ConnectServer[]>(`/servers?userId=${encodeURIComponent(connectUserId)}`, {
+      headers: {
+        'X-Connect-UserToken': connectAccessToken,
+      },
+    });
+  }
+
+  async exchangeConnectForLocalAccessToken(
+    serverUrl: string,
+    connectUserId: string,
+    serverAccessKey: string
+  ): Promise<ConnectExchangeResponse> {
+    const baseUrl = this.normalizeServerUrl(serverUrl);
+    const response = await fetch(
+      `${baseUrl}/Connect/Exchange?format=json&ConnectUserId=${encodeURIComponent(connectUserId)}`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Emby-Token': serverAccessKey,
+          'X-Emby-Authorization': this.getEmbyAuthorizationHeaderValue(''),
+          Accept: 'application/json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(
+        `Connect exchange failed: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ''}`
+      );
+    }
+
+    return response.json();
   }
 
   async logout(): Promise<void> {

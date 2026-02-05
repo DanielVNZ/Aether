@@ -24,7 +24,8 @@ function EpisodeCard({
   isWatched, 
   onEpisodeClick,
   onToggleWatched,
-  formatRuntime 
+  formatRuntime,
+  onFocus
 }: { 
   episode: EmbyItem; 
   thumbUrl: string;
@@ -33,6 +34,7 @@ function EpisodeCard({
   onEpisodeClick: (episode: EmbyItem) => void;
   onToggleWatched: (episode: EmbyItem, currentlyWatched: boolean) => void;
   formatRuntime: (ticks: number) => string;
+  onFocus?: (element: HTMLDivElement) => void;
 }) {
   const [isImageLoaded, setIsImageLoaded] = useState(false);
   const [isToggling, setIsToggling] = useState(false);
@@ -59,6 +61,7 @@ function EpisodeCard({
           onEpisodeClick(episode);
         }
       }}
+      onFocus={(e) => onFocus?.(e.currentTarget)}
       tabIndex={0}
       role="button"
       className="group bg-white/5 hover:bg-white/10 rounded-xl overflow-hidden cursor-pointer transition-all duration-200 focusable-card text-left tv-episode-card"
@@ -178,7 +181,7 @@ export function MediaDetails() {
   const navigate = useNavigate();
   const location = useLocation();
   const mediaHint = (location.state as any)?.mediaType as 'Movie' | 'Series' | 'Episode' | undefined;
-  useTVNavigation();
+  const { focusElement } = useTVNavigation({ containerSelector: '.media-details' });
   
   const [item, setItem] = useState<EmbyItem | null>(null);
   const [seasons, setSeasons] = useState<EmbyItem[]>([]);
@@ -197,6 +200,7 @@ export function MediaDetails() {
   const hasAutoSelectedSeasonRef = useRef(false);
   const [isMarkingSeasonWatched, setIsMarkingSeasonWatched] = useState(false);
   const [isFavChanging, setIsFavChanging] = useState(false);
+  const lastEpisodeFocusRef = useRef<HTMLElement | null>(null);
   // TV layout now handled with CSS-only (no JS offsets)
 
   // TV-specific spacing handled in CSS (tv-navigation.css)
@@ -401,6 +405,47 @@ export function MediaDetails() {
     navigate(`/player/${episode.Id}`);
   };
 
+  const focusClosestAboveSimilar = () => {
+    const similarSection = document.querySelector<HTMLElement>('.media-details .more-like-this');
+    if (!similarSection) return;
+    const similarTop = similarSection.getBoundingClientRect().top;
+    const focusables = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '.media-details button, .media-details [tabindex="0"], .media-details .focusable-card, .media-details .focusable-item, .media-details .focusable-tab, .media-details a[href]'
+      )
+    ).filter((el) => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+      if (rect.width === 0 || rect.height === 0) return false;
+      return rect.bottom <= similarTop - 8;
+    });
+
+    if (focusables.length === 0) return;
+    focusables.sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom);
+    focusElement(focusables[0], 'up');
+  };
+
+  const focusEpisodesFromSimilar = () => {
+    const last = lastEpisodeFocusRef.current;
+    if (last && document.contains(last)) {
+      const rect = last.getBoundingClientRect();
+      const inView = rect.bottom > 0 && rect.top < window.innerHeight;
+      if (inView) {
+        focusElement(last, 'up');
+        return;
+      }
+    }
+
+    const firstEpisodeCard = document.querySelector<HTMLElement>('.media-details .media-episodes-section .tv-episode-card');
+    if (firstEpisodeCard) {
+      focusElement(firstEpisodeCard, 'up');
+      return;
+    }
+
+    focusClosestAboveSimilar();
+  };
+
   const handleToggleWatched = async (episode: EmbyItem, currentlyWatched: boolean) => {
     try {
       if (currentlyWatched) {
@@ -523,7 +568,11 @@ export function MediaDetails() {
     : '';
 
   return (
-    <div className={`min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 media-details`}>
+    <div
+      className={`min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 media-details ${
+        item?.Type === 'Movie' ? 'media-details-movie' : ''
+      }`}
+    >
       {/* Fixed Background */}
       <div className="fixed inset-0 z-0">
         {backdropUrl && (
@@ -549,11 +598,14 @@ export function MediaDetails() {
       </button>
 
       {/* Hero Section */}
-      <div className="relative z-10 tv-hero pt-24">
+      <div
+        className="relative z-10 tv-hero pt-24 media-details-hero"
+        data-tv-section="media-hero"
+      >
         {/* Content */}
-        <div className="relative max-w-7xl mx-auto px-6 pb-6 flex gap-10">
+        <div className="relative max-w-7xl mx-auto px-6 pb-6 flex gap-10 media-details-hero-content">
           {/* Poster */}
-          <div className="hidden md:block flex-shrink-0 w-72">
+          <div className="hidden md:block flex-shrink-0 w-72 media-details-poster">
             <div className="aspect-[2/3] rounded-xl overflow-hidden shadow-2xl shadow-black/50 ring-1 ring-white/10">
               {isLoading && !posterUrl ? (
                 <div className="w-full h-full bg-gradient-to-br from-gray-800 to-gray-900 animate-pulse" />
@@ -575,7 +627,7 @@ export function MediaDetails() {
           </div>
 
           {/* Info */}
-          <div className="flex-1 flex flex-col justify-center">
+          <div className="flex-1 flex flex-col justify-start media-details-info">
             {/* Logo or Title */}
             {isLoading && !item ? (
               <div className="w-80 h-12 bg-white/10 rounded mb-6 animate-pulse" />
@@ -584,14 +636,14 @@ export function MediaDetails() {
                 src={logoUrl}
                 alt={item?.Name || ''}
                 loading="lazy"
-                className="max-w-md max-h-32 object-contain mb-6 transition-opacity duration-300"
+                className="max-w-md max-h-24 object-contain mb-6 transition-opacity duration-300"
               />
             ) : (
-              <h1 className="text-5xl font-bold text-white mb-4 transition-opacity duration-300">{item?.Name}</h1>
+              <h1 className="text-5xl font-bold text-white mb-4 transition-opacity duration-300 media-details-title">{item?.Name}</h1>
             )}
 
             {/* Meta info */}
-            <div className="flex flex-wrap items-center gap-4 mb-6 text-gray-300">
+            <div className="flex flex-wrap items-center gap-4 mb-6 text-gray-300 media-details-meta">
               {isLoading && !item ? (
                 <>
                   <span className="w-10 h-5 rounded bg-white/10 animate-pulse" />
@@ -634,7 +686,7 @@ export function MediaDetails() {
                 <span className="w-14 h-7 rounded-full bg-blue-500/20 border border-blue-500/30 animate-pulse" />
               </div>
             ) : item?.Genres && item.Genres.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-6">
+              <div className="flex flex-wrap gap-2 mb-6 media-details-genres">
                 {item.Genres.map((genre) => (
                   <button
                     key={genre}
@@ -655,13 +707,13 @@ export function MediaDetails() {
                 <div className="h-5 bg-white/10 rounded animate-pulse w-10/12" />
               </div>
             ) : item?.Overview && (
-              <p className="text-gray-300 text-lg leading-relaxed mb-8 max-w-3xl line-clamp-4">
+              <p className="text-gray-300 text-lg leading-relaxed mb-8 max-w-3xl line-clamp-4 media-details-overview">
                 {item.Overview}
               </p>
             )}
 
             {/* Action Buttons */}
-            <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4 media-details-actions">
               {/* Continue Watching button for series with in-progress episode */}
               {isLoading && !item ? (
                 <div className="px-24 py-4 rounded-lg bg-white/10 border border-white/10 animate-pulse" />
@@ -669,6 +721,8 @@ export function MediaDetails() {
                 <button
                   ref={playButtonRef}
                   onClick={handleContinueWatching}
+                  data-tv-group="media-actions"
+                  data-tv-order="1"
                   className="px-8 py-4 bg-white text-black font-bold rounded-lg hover:bg-white/90 hover:shadow-2xl hover:shadow-white/30 hover:-translate-y-0.5 transition-all duration-200 flex items-center gap-3 shadow-xl shadow-white/10 text-lg primary-action"
                 >
                   <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -690,6 +744,8 @@ export function MediaDetails() {
                 <button
                   ref={playButtonRef}
                   onClick={() => handlePlay()}
+                  data-tv-group="media-actions"
+                  data-tv-order="1"
                   className="px-8 py-4 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition-all duration-200 flex items-center gap-3 shadow-xl shadow-white/10 text-lg primary-action"
                 >
                   <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
@@ -703,6 +759,8 @@ export function MediaDetails() {
               {!!item?.UserData?.PlaybackPositionTicks && item?.Type !== 'Series' && (
                 <button
                   onClick={() => handlePlay()}
+                  data-tv-group="media-actions"
+                  data-tv-order="2"
                   className="px-6 py-4 bg-white/10 text-white font-medium rounded-lg hover:bg-white/20 transition-all duration-200 backdrop-blur-sm border border-white/10"
                 >
                   Play from Beginning
@@ -713,6 +771,8 @@ export function MediaDetails() {
               {continueWatchingEpisode && item?.Type === 'Series' && (
                 <button
                   onClick={() => handlePlay()}
+                  data-tv-group="media-actions"
+                  data-tv-order="2"
                   className="px-6 py-4 bg-white/10 text-white font-medium rounded-lg hover:bg-white/20 transition-all duration-200 backdrop-blur-sm border border-white/10"
                 >
                   Play from Beginning
@@ -725,6 +785,8 @@ export function MediaDetails() {
                   onClick={handleToggleFavorite}
                   tabIndex={0}
                   aria-label={item.UserData?.IsFavorite ? `Unfavorite ${item.Name}` : `Favorite ${item.Name}`}
+                  data-tv-group="media-actions"
+                  data-tv-order="3"
                   className={`px-6 py-4 rounded-lg font-medium transition-all duration-200 focusable-item flex items-center gap-3 ${
                     item.UserData?.IsFavorite
                       ? 'bg-yellow-400 text-black hover:bg-yellow-300'
@@ -783,7 +845,10 @@ export function MediaDetails() {
 
       {/* Seasons & Episodes */}
       {(item?.Type === 'Series') || (isLoading && !item && mediaHint === 'Series') ? (
-        <div className="max-w-7xl mx-auto px-6 relative z-20 media-episodes-section">
+        <div
+          className="max-w-7xl mx-auto px-6 relative z-20 media-episodes-section"
+          data-tv-section="media-episodes"
+        >
           {/* Season Selector - Dropdown style for many seasons, tabs for few */}
           <div className="flex flex-col gap-3 mb-6">
             <div className="flex flex-wrap items-center gap-3">
@@ -913,6 +978,9 @@ export function MediaDetails() {
                   onEpisodeClick={handleEpisodeClick}
                   onToggleWatched={handleToggleWatched}
                   formatRuntime={formatRuntime}
+                  onFocus={(el) => {
+                    lastEpisodeFocusRef.current = el;
+                  }}
                 />
               );
             })}
@@ -922,7 +990,10 @@ export function MediaDetails() {
 
       {/* More Like This Section */}
       {isLoading && !item ? (
-        <div className="relative z-10 px-6 lg:px-12 py-8">
+        <div
+          className="relative z-10 px-6 lg:px-12 py-8 more-like-this"
+          data-tv-section="media-similar"
+        >
           <div className="h-6 w-40 bg-white/10 rounded mb-4 animate-pulse" />
           <div className="flex gap-4 overflow-hidden pb-4">
             {Array.from({ length: 8 }).map((_, i) => (
@@ -935,7 +1006,10 @@ export function MediaDetails() {
           </div>
         </div>
       ) : similarItems.length > 0 && (
-        <div className="relative z-10 px-6 lg:px-12 py-8">
+        <div
+          className="relative z-10 px-6 lg:px-12 py-8 more-like-this"
+          data-tv-section="media-similar"
+        >
           <h2 className="text-xl font-bold text-white mb-4">More Like This</h2>
           <div className="relative group/similar">
             {/* Left scroll button */}
@@ -997,6 +1071,13 @@ export function MediaDetails() {
                 <button
                   key={similarItem.Id}
                   onClick={() => navigate(`/details/${similarItem.Id}`, { state: { mediaType: similarItem.Type } })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowUp' && item?.Type === 'Series') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      focusEpisodesFromSimilar();
+                    }
+                  }}
                   className="flex-shrink-0 w-36 lg:w-44 group text-left focusable-card"
                   role="listitem"
                 >
