@@ -3,7 +3,7 @@ This decision was not made lightly and I may continue android development in the
 
 <div align="center">
 
-# 🌌 Aether
+# Aether
 ### The Definitive Direct-Play Experience for Emby
 
 [![Platform - Windows](https://img.shields.io/badge/Platform-Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/DanielVNZ/modern-emby)
@@ -30,7 +30,7 @@ Built with a **Direct Play Focus**, it bypasses server-side transcoding to deliv
 | **Dynamic Home:** Smart *Continue Watching* plus recommendations generated from your watched movies and shows. | **Stats for Nerds:** Real-time monitoring of bitrates, resolution, and buffering health. |
 | **Custom Home Sections:** Build your own Browse experience using favorite filters as homepage sections. | **TMDB-Powered Discovery:** Optional TMDB API key unlocks rich, external recommendations and metadata. |
 | **Flexible Sign-In:** Log in via **Emby Connect** or connect directly to your server. | **Playback Preferences:** Configure default audio tracks and preferred streaming quality in settings. |
-| **Native Desktop App:** Seamless Windows experience with system integration. | **Rust-Powered:** Lightweight, secure, blazing-fast desktop builds via Tauri. |
+| **Web Desktop App:** Seamless Windows experience. | **Rust-Powered:** Lightweight, secure, blazing-fast desktop builds via Tauri. |
 
 ---
 
