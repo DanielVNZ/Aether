@@ -2,8 +2,10 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { embyApi } from '../services/embyApi';
 import { useAuth } from '../hooks/useAuth';
+import { check } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
 
-type SettingsSection = 'home' | 'recommendations' | 'playback' | 'account';
+type SettingsSection = 'home' | 'recommendations' | 'playback' | 'account' | 'updates';
 
 export function Settings() {
   const navigate = useNavigate();
@@ -139,10 +141,94 @@ export function Settings() {
     navigate('/home');
   };
 
+  // Update checker state
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [updateVersion, setUpdateVersion] = useState<string>('');
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [hasCheckedForUpdates, setHasCheckedForUpdates] = useState(false);
+  const [currentVersion] = useState('3.0.7');
+
+  const checkForUpdates = async () => {
+    try {
+      setIsCheckingUpdate(true);
+      setUpdateError(null);
+      setHasCheckedForUpdates(false);
+      
+      const update = await check();
+      
+      if (update) {
+        console.log(`Update available: ${update.version}, current: ${update.currentVersion}`);
+        setUpdateAvailable(true);
+        setUpdateVersion(update.version);
+      } else {
+        setUpdateAvailable(false);
+        setUpdateVersion('');
+      }
+      setHasCheckedForUpdates(true);
+    } catch (err) {
+      console.error('Error checking for updates:', err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setUpdateError(`Failed to check for updates: ${errorMessage}`);
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
+
+  const downloadAndInstallUpdate = async () => {
+    try {
+      setIsDownloading(true);
+      setUpdateError(null);
+      
+      const update = await check();
+      
+      if (!update) {
+        setUpdateError('No update found. Please check for updates first.');
+        setIsDownloading(false);
+        return;
+      }
+      
+      console.log('Starting download from:', update);
+      
+      let bytesDownloaded = 0;
+      await update.downloadAndInstall((event) => {
+        console.log('Update event:', event);
+        switch (event.event) {
+          case 'Started':
+            bytesDownloaded = 0;
+            setDownloadProgress(0);
+            console.log('Download started');
+            break;
+          case 'Progress':
+            bytesDownloaded += event.data.chunkLength;
+            const animatedProgress = Math.min(90, (bytesDownloaded / (1024 * 1024 * 50)) * 100);
+            setDownloadProgress(animatedProgress);
+            console.log(`Downloaded: ${(bytesDownloaded / 1024 / 1024).toFixed(2)} MB`);
+            break;
+          case 'Finished':
+            setDownloadProgress(100);
+            console.log('Download complete');
+            break;
+        }
+      });
+
+      console.log('Installing update and relaunching...');
+      await relaunch();
+    } catch (err) {
+      console.error('Error downloading update:', err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setUpdateError(`Update failed: ${errorMessage}`);
+      setIsDownloading(false);
+    }
+  };
+
   const sections = [
     { id: 'home' as const, label: 'Home Screen', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
     { id: 'recommendations' as const, label: 'Recommendations', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z' },
     { id: 'playback' as const, label: 'Playback', icon: 'M8 5v14l11-7z' },
+    { id: 'updates' as const, label: 'Updates', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
     { id: 'account' as const, label: 'Account', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' },
   ];
 
@@ -167,6 +253,7 @@ export function Settings() {
         <div className="p-4 border-b border-gray-800/50">
           <h1 className="text-2xl font-bold text-white px-2">Settings</h1>
           <p className="text-sm text-gray-400 mt-1 px-2">Customize your experience</p>
+          <p className="text-xs text-gray-500 mt-1 px-2">Version {currentVersion}</p>
         </div>
 
         <nav className="flex-1 p-4 space-y-1">
@@ -517,7 +604,96 @@ export function Settings() {
             </div>
           )}
 
-          {/* Account Section */}
+          {/* Updates Section */}
+          {activeSection === 'updates' && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-3xl font-bold text-white">Updates</h2>
+                <p className="text-gray-400 mt-2">Check for and install app updates</p>
+              </div>
+
+              {/* Current Version */}
+              <div className="bg-gray-900/50 rounded-xl border border-gray-800/70 overflow-hidden backdrop-blur-sm">
+                <div className="p-6">
+                  <p className="text-white font-semibold text-lg mb-2">Current Version</p>
+                  <p className="text-3xl font-bold text-blue-400 mb-1">{currentVersion}</p>
+                  <p className="text-sm text-gray-400">Aether Media Player</p>
+                </div>
+              </div>
+
+              {/* Check for Updates */}
+              <div className="bg-gray-900/50 rounded-xl border border-gray-800/70 overflow-hidden backdrop-blur-sm">
+                <div className="p-6">
+                  <p className="text-white font-semibold text-lg mb-2">Check for Updates</p>
+                  <p className="text-sm text-gray-400 mb-5">Manually check for new versions from GitHub</p>
+                  
+                  {updateError && (
+                    <div className="mb-4 p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+                      <p className="text-red-400 text-sm">{updateError}</p>
+                    </div>
+                  )}
+
+                  {updateAvailable && !isDownloading && (
+                    <div className="mb-4 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                      <p className="text-blue-400 font-semibold mb-1">Update Available!</p>
+                      <p className="text-blue-300 text-sm">Version {updateVersion} is ready to install</p>
+                    </div>
+                  )}
+
+                  {!hasCheckedForUpdates && !isCheckingUpdate && !updateError && (
+                    <div className="mb-4 p-4 bg-gray-800/50 border border-gray-700/50 rounded-lg">
+                      <p className="text-gray-400 text-sm">Click the button below to check for updates</p>
+                    </div>
+                  )}
+
+                  {hasCheckedForUpdates && !updateAvailable && !isCheckingUpdate && !updateError && (
+                    <div className="mb-4 p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
+                      <p className="text-green-400 text-sm">You're running the latest version</p>
+                    </div>
+                  )}
+
+                  {isDownloading && (
+                    <div className="mb-4">
+                      <p className="text-white text-sm mb-2">Downloading update...</p>
+                      <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-blue-500 transition-all duration-300"
+                          style={{ width: `${downloadProgress}%` }}
+                        />
+                      </div>
+                      <p className="text-gray-400 text-xs mt-1">{downloadProgress.toFixed(0)}%</p>
+                    </div>
+                  )}
+                  
+                  <div className="flex gap-3">
+                    <button
+                      onClick={checkForUpdates}
+                      disabled={isCheckingUpdate || isDownloading}
+                      className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 text-white font-semibold rounded-xl transition-all duration-200 hover:scale-105 disabled:scale-100 disabled:cursor-not-allowed flex items-center gap-3"
+                    >
+                      <svg className={`w-5 h-5 ${isCheckingUpdate ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      {isCheckingUpdate ? 'Checking...' : 'Check for Updates'}
+                    </button>
+
+                    {updateAvailable && !isDownloading && (
+                      <button
+                        onClick={downloadAndInstallUpdate}
+                        className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-xl transition-all duration-200 hover:scale-105 flex items-center gap-3"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Install Update
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeSection === 'account' && (
             <div className="space-y-6">
               <div>

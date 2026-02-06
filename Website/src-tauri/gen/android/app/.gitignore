@@ -4,3 +4,6 @@
 /tauri.build.gradle.kts
 /proguard-tauri.pro
 /tauri.properties
+
+# Tauri config (local overrides)
+tauri.conf.json

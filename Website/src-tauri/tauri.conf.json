@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Aether",
-  "version": "2.0.3",
+  "version": "3.0.7",
   "identifier": "com.aether.app",
   "build": {
     "frontendDist": "../dist",
@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Aether",
         "width": 1280,
         "height": 720,
@@ -29,7 +30,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "targets": ["nsis"],
     "publisher": "DanielVNZ",
     "copyright": "Copyright © 2026 DanielVNZ",
     "shortDescription": "Aether - Media streaming client",
@@ -45,7 +47,8 @@
       "certificateThumbprint": null,
       "timestampUrl": null,
       "nsis": {
-        "installerIcon": "icons/icon.ico"
+        "installerIcon": "icons/icon.ico",
+        "installMode": "perMachine"
       }
     },
     "android": {
@@ -53,8 +56,13 @@
     }
   },
   "plugins": {
-    "shell": {
-      "open": true
+    "updater": {
+      "active": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQyQTEwNDg4RjdBMkM5RTIKUldUaXlhTDNpQVNoMHFML0tYN0NJZGs2RVZqWEdSNHJmbHNjWERvT0JmN0dVT2VTL09zdXJSU3UK",
+      "endpoints": [
+        "https://github.com/DanielVNZ/Aether/releases/latest/download/latest.json"
+      ],
+      "dialog": false
     }
   }
 }

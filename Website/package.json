@@ -1,7 +1,7 @@
 {
   "name": "aether",
   "private": true,
-  "version": "2.0.3",
+  "version": "3.0.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "tauri:build:release": "tauri build && node scripts/generate-updater-json.js",
+    "generate-updater-json": "node scripts/generate-updater-json.js"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.18",

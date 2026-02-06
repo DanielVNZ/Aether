@@ -17,3 +17,6 @@ key.properties
 
 /.tauri
 /tauri.settings.gradle
+
+# Tauri config (local overrides)
+tauri.conf.json

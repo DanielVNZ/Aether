@@ -1,0 +1,11 @@
+{
+  "version": "3.0.4",
+  "notes": "What's New:\n- Auto-update support - Get notified of new versions directly in the app\n- Performance improvements\n- Bug fixes",
+  "pub_date": "2026-02-07T12:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "",
+      "url": "https://github.com/DanielVNZ/Aether/releases/download/v3.0.4/Aether_3.0.4_x64-setup.exe"
+    }
+  }
+}

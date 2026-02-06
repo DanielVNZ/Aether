@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { authService } from './services/auth';
 import { embyApi } from './services/embyApi';
 import { AppFallbackSkeleton } from './components/AppFallbackSkeleton';
+import { UpdateBanner } from './components/UpdateBanner';
 
 // Lazy load all route components for better initial load
 const Login = lazy(() => import('./components/Login').then(m => ({ default: m.Login })));
@@ -33,6 +34,7 @@ function App() {
 
   return (
     <BrowserRouter>
+      <UpdateBanner />
       <Suspense fallback={<AppFallbackSkeleton />}>
         <Routes>
           <Route path="/login" element={<Login />} />
