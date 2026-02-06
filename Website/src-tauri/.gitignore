@@ -3,5 +3,8 @@
 /target/
 /gen/schemas
 
+# Node modules
+node_modules
+
 # Tauri config (local overrides)
 tauri.conf.json

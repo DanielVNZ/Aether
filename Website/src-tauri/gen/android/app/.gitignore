@@ -5,5 +5,8 @@
 /proguard-tauri.pro
 /tauri.properties
 
+# Node modules
+node_modules
+
 # Tauri config (local overrides)
 tauri.conf.json
