@@ -9,11 +9,7 @@ export function Footer() {
     // Don't load Ko-fi widget on player page
     if (isPlayerPage) return;
 
-    // Load Ko-fi widget script
-    const script = document.createElement('script');
-    script.src = 'https://storage.ko-fi.com/cdn/scripts/overlay-widget.js';
-    script.async = true;
-    script.onload = () => {
+    const drawKofi = () => {
       if (window.kofiWidgetOverlay) {
         window.kofiWidgetOverlay.draw('danielvnz', {
           'type': 'floating-chat',
@@ -24,13 +20,27 @@ export function Footer() {
         });
       }
     };
+
+    const existingScript = document.querySelector('script[data-kofi-widget="overlay"]') as HTMLScriptElement | null;
+    if (existingScript) {
+      drawKofi();
+      return () => {
+        const kofiWidget = document.querySelector('.floatingchat-container-wrap');
+        if (kofiWidget) {
+          kofiWidget.remove();
+        }
+      };
+    }
+
+    // Load Ko-fi widget script once
+    const script = document.createElement('script');
+    script.src = 'https://storage.ko-fi.com/cdn/scripts/overlay-widget.js';
+    script.async = true;
+    script.dataset.kofiWidget = 'overlay';
+    script.onload = drawKofi;
     document.body.appendChild(script);
 
     return () => {
-      // Cleanup script on unmount
-      if (document.body.contains(script)) {
-        document.body.removeChild(script);
-      }
       // Remove Ko-fi widget elements
       const kofiWidget = document.querySelector('.floatingchat-container-wrap');
       if (kofiWidget) {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, memo, useCallback, useMemo, type ReactElement } from 'react';
+import React, { useState, useEffect, useRef, memo, useCallback, useMemo, type ReactElement } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { embyApi } from '../services/embyApi';
 import { tmdbApi } from '../services/tmdbApi';
@@ -171,7 +171,7 @@ const MediaCard = memo(({ item, size = 'normal', onItemClick, onToggleFavorite, 
 });
 
 // MediaRow component - Modern Netflix-style horizontal scroll
-const MediaRow = memo(({ title, items, icon, browseLink, subtitle, onItemClick, onBrowseClick, onToggleFavorite, favChanging, favoriteIds, onRemove, enableDragReorder, onReorder }: { 
+const MediaRow = memo(({ title, items, icon, browseLink, subtitle, onItemClick, onBrowseClick, onToggleFavorite, favChanging, favoriteIds, onRemove, enableDragReorder, onReorder, editMode, isHidden, onToggleVisibility, onMoveUp, onMoveDown, canMoveUp, canMoveDown }: { 
   title: string; 
   items: EmbyItem[]; 
   icon?: React.ReactNode; 
@@ -185,6 +185,13 @@ const MediaRow = memo(({ title, items, icon, browseLink, subtitle, onItemClick, 
   onRemove?: () => void;
   enableDragReorder?: boolean;
   onReorder?: (fromIndex: number, toIndex: number) => void;
+  editMode?: boolean;
+  isHidden?: boolean;
+  onToggleVisibility?: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -224,19 +231,71 @@ const MediaRow = memo(({ title, items, icon, browseLink, subtitle, onItemClick, 
     }
   };
 
-  if (items.length === 0) return null;
+  if (items.length === 0 && !editMode) return null;
 
   return (
-    <div className="mb-12 group/row">
+    <div className={`mb-12 group/row ${editMode && isHidden ? 'opacity-80' : ''}`}>
       {/* Row Header */}
       <div className="flex items-center justify-between mb-5 px-2">
         <div className="flex items-center gap-3">
           {icon && <div className="text-blue-500">{icon}</div>}
           <h2 className="text-2xl font-bold text-white tracking-tight">{title}</h2>
           {subtitle && <span className="text-sm text-gray-500 font-medium">{subtitle}</span>}
+          {editMode && isHidden && (
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-yellow-300/80 bg-yellow-500/10 border border-yellow-500/20 rounded-full px-2 py-0.5">
+              Hidden
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3">
-          {onRemove && (
+          {editMode && onMoveUp && onMoveDown && (
+            <>
+              <button
+                onClick={onMoveUp}
+                className={`p-2 rounded-lg transition-all duration-200 ${
+                  !canMoveUp ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-gray-800/50 text-blue-300 hover:bg-gray-700 hover:scale-110'
+                }`}
+                disabled={!canMoveUp}
+                aria-label={`Move ${title} up`}
+                title="Move up"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                </svg>
+              </button>
+              <button
+                onClick={onMoveDown}
+                className={`p-2 rounded-lg transition-all duration-200 ${
+                  !canMoveDown ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-gray-800/50 text-blue-300 hover:bg-gray-700 hover:scale-110'
+                }`}
+                disabled={!canMoveDown}
+                aria-label={`Move ${title} down`}
+                title="Move down"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </>
+          )}
+          {editMode && (
+            <button
+              type="button"
+              onClick={onToggleVisibility}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                isHidden ? 'bg-white/20' : 'bg-blue-500'
+              }`}
+              aria-pressed={!isHidden}
+              aria-label={`${isHidden ? 'Show' : 'Hide'} ${title}`}
+            >
+              <span
+                className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                  isHidden ? 'translate-x-1' : 'translate-x-5'
+                }`}
+              />
+            </button>
+          )}
+          {onRemove && editMode && (
             <button
               onClick={onRemove}
               className="flex items-center gap-2 px-4 py-2 text-sm text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-all duration-200"
@@ -293,57 +352,24 @@ const MediaRow = memo(({ title, items, icon, browseLink, subtitle, onItemClick, 
           </button>
         )}
 
-        <div 
-          ref={scrollContainerRef}
-          className="flex gap-3 overflow-x-auto scrollbar-hide px-2 py-2" 
-          role="list"
-          aria-label={title}
-        >
-          {items.map((item, index) => {
-            const isDraggable = !!enableDragReorder;
-            const showPlaceholder = isDraggable && dragIndex !== null && dragOverIndex === index && dragIndex !== index;
-            return (
-              <div
-                key={`${item.Id}-${index}`}
-                className="flex"
-                onDragOver={(e) => {
-                  if (!isDraggable) return;
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = 'move';
-                  setDragOverIndex(index);
-                }}
-                onDrop={(e) => {
-                  if (!isDraggable) return;
-                  e.preventDefault();
-                  const fromRaw = dragIndex ?? Number(e.dataTransfer.getData('text/plain'));
-                  if (Number.isNaN(fromRaw) || fromRaw === index) {
-                    setDragIndex(null);
-                    setDragOverIndex(null);
-                    return;
-                  }
-                  onReorder?.(fromRaw, index);
-                  setDragIndex(null);
-                  setDragOverIndex(null);
-                }}
-              >
-                {showPlaceholder && (
-                  <div className="flex-shrink-0 w-48 pointer-events-none">
-                    <div className="relative aspect-[2/3] rounded-lg border-2 border-dashed border-blue-500/70 bg-blue-500/10 mb-3" />
-                  </div>
-                )}
+        {items.length === 0 ? (
+          <div className="px-2 py-6 text-sm text-gray-500">
+            No items to show yet.
+          </div>
+        ) : (
+          <div 
+            ref={scrollContainerRef}
+            className="flex gap-3 overflow-x-auto scrollbar-hide px-2 py-2" 
+            role="list"
+            aria-label={title}
+          >
+            {items.map((item, index) => {
+              const isDraggable = !!enableDragReorder;
+              const showPlaceholder = isDraggable && dragIndex !== null && dragOverIndex === index && dragIndex !== index;
+              return (
                 <div
-                  draggable={isDraggable}
-                  onDragStart={(e) => {
-                    if (!isDraggable) return;
-                    setDragIndex(index);
-                    setDragOverIndex(index);
-                    e.dataTransfer.effectAllowed = 'move';
-                    e.dataTransfer.setData('text/plain', String(index));
-                  }}
-                  onDragEnter={() => {
-                    if (!isDraggable) return;
-                    setDragOverIndex(index);
-                  }}
+                  key={`${item.Id}-${index}`}
+                  className="flex"
                   onDragOver={(e) => {
                     if (!isDraggable) return;
                     e.preventDefault();
@@ -363,24 +389,63 @@ const MediaRow = memo(({ title, items, icon, browseLink, subtitle, onItemClick, 
                     setDragIndex(null);
                     setDragOverIndex(null);
                   }}
-                  onDragEnd={() => {
-                    setDragIndex(null);
-                    setDragOverIndex(null);
-                  }}
-                  className={isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}
                 >
-                  <MediaCard 
-                    item={item} 
-                    onItemClick={onItemClick} 
-                    onToggleFavorite={onToggleFavorite}
-                    isFavChanging={!!favChanging?.[item.Type === 'Episode' && item.SeriesId ? item.SeriesId : item.Id]}
-                    favoriteIds={favoriteIds}
-                  />
+                  {showPlaceholder && (
+                    <div className="flex-shrink-0 w-48 pointer-events-none">
+                      <div className="relative aspect-[2/3] rounded-lg border-2 border-dashed border-blue-500/70 bg-blue-500/10 mb-3" />
+                    </div>
+                  )}
+                  <div
+                    draggable={isDraggable}
+                    onDragStart={(e) => {
+                      if (!isDraggable) return;
+                      setDragIndex(index);
+                      setDragOverIndex(index);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', String(index));
+                    }}
+                    onDragEnter={() => {
+                      if (!isDraggable) return;
+                      setDragOverIndex(index);
+                    }}
+                    onDragOver={(e) => {
+                      if (!isDraggable) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      setDragOverIndex(index);
+                    }}
+                    onDrop={(e) => {
+                      if (!isDraggable) return;
+                      e.preventDefault();
+                      const fromRaw = dragIndex ?? Number(e.dataTransfer.getData('text/plain'));
+                      if (Number.isNaN(fromRaw) || fromRaw === index) {
+                        setDragIndex(null);
+                        setDragOverIndex(null);
+                        return;
+                      }
+                      onReorder?.(fromRaw, index);
+                      setDragIndex(null);
+                      setDragOverIndex(null);
+                    }}
+                    onDragEnd={() => {
+                      setDragIndex(null);
+                      setDragOverIndex(null);
+                    }}
+                    className={isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}
+                  >
+                    <MediaCard 
+                      item={item} 
+                      onItemClick={onItemClick} 
+                      onToggleFavorite={onToggleFavorite}
+                      isFavChanging={!!favChanging?.[item.Type === 'Episode' && item.SeriesId ? item.SeriesId : item.Id]}
+                      favoriteIds={favoriteIds}
+                    />
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -391,7 +456,13 @@ const MediaRow = memo(({ title, items, icon, browseLink, subtitle, onItemClick, 
          prevProps.subtitle === nextProps.subtitle &&
          prevProps.favChanging === nextProps.favChanging &&
          prevProps.favoriteIds === nextProps.favoriteIds &&
-         prevProps.onRemove === nextProps.onRemove;
+         prevProps.onRemove === nextProps.onRemove &&
+         prevProps.editMode === nextProps.editMode &&
+         prevProps.isHidden === nextProps.isHidden &&
+         prevProps.canMoveUp === nextProps.canMoveUp &&
+         prevProps.canMoveDown === nextProps.canMoveDown &&
+         prevProps.onMoveUp === nextProps.onMoveUp &&
+         prevProps.onMoveDown === nextProps.onMoveDown;
 });
 
 export function Home() {
@@ -417,6 +488,17 @@ export function Home() {
   const [recommendationStatus, setRecommendationStatus] = useState<'loading' | 'no_stats' | 'no_genres' | 'no_results' | 'ready' | null>(null);
   const [latestStatus, setLatestStatus] = useState<'idle' | 'loading' | 'loaded'>('idle');
   const [popularStatus, setPopularStatus] = useState<'idle' | 'loading' | 'loaded'>('idle');
+  const [isEditMode, setIsEditMode] = useState(false);
+  const HOME_SECTION_VISIBILITY_KEY = 'emby_homeSectionVisibility';
+  const [sectionVisibility, setSectionVisibility] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem(HOME_SECTION_VISIBILITY_KEY);
+      return raw ? JSON.parse(raw) as Record<string, boolean> : {};
+    } catch (error) {
+      console.error('Failed to parse home section visibility:', error);
+      return {};
+    }
+  });
   const [favChanging, setFavChanging] = useState<Record<string, boolean>>({});
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track if this is first load
   const [showContent, setShowContent] = useState(false); // Track content fade in
@@ -441,6 +523,20 @@ export function Home() {
   const [popularTVShows, setPopularTVShows] = useState<EmbyItem[]>([]);
   const [customSections, setCustomSections] = useState<{ id: string; name: string; filters: any; searchTerm: string; mediaType: string; }[]>([]);
   const [customSectionItems, setCustomSectionItems] = useState<Record<string, EmbyItem[]>>({});
+  const [homeSectionOrder, setHomeSectionOrder] = useState<string[]>(() => {
+    const saved = localStorage.getItem('emby_homeSectionOrder');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((id: unknown) => typeof id === 'string');
+        }
+      } catch (error) {
+        console.error('Failed to parse home section order:', error);
+      }
+    }
+    return [];
+  });
   const normalizeFavoritesOrder = (items: EmbyItem[]) => items.slice().reverse();
   const favoriteIds = useMemo(() => new Set(favoriteItems.map(it => it.Id)), [favoriteItems]);
   const canDragFavorites = true; // Always enable for PC
@@ -475,6 +571,37 @@ export function Home() {
     ? embyApi.getImageUrl(featuredItem.Id, 'Primary', { maxWidth: 1280, tag: featuredItem.ImageTags.Primary })
     : '';
 
+  // Sync sectionVisibility changes to localStorage
+  useEffect(() => {
+    localStorage.setItem(HOME_SECTION_VISIBILITY_KEY, JSON.stringify(sectionVisibility));
+  }, [sectionVisibility, HOME_SECTION_VISIBILITY_KEY]);
+
+  // Normalize sectionVisibility - ensure all section IDs have boolean values
+  useEffect(() => {
+    const allSectionIds = [...defaultHomeSectionOrder, ...customSections.map(s => s.id)];
+    const normalizedVisibility = { ...sectionVisibility };
+    let needsUpdate = false;
+
+    // Set undefined values to true (visible by default)
+    allSectionIds.forEach((id) => {
+      if (typeof normalizedVisibility[id] !== 'boolean') {
+        normalizedVisibility[id] = true;
+        needsUpdate = true;
+      }
+    });
+
+    // Remove stale section IDs
+    Object.keys(normalizedVisibility).forEach((id) => {
+      if (!allSectionIds.includes(id)) {
+        delete normalizedVisibility[id];
+        needsUpdate = true;
+      }
+    });
+
+    if (needsUpdate) {
+      setSectionVisibility(normalizedVisibility);
+    }
+  }, [customSections, sectionVisibility, defaultHomeSectionOrder]);
 
   // Load cached data from sessionStorage immediately on mount
   useEffect(() => {
@@ -745,6 +872,34 @@ export function Home() {
     }
   }, [recommendationStatus, recommendedMovies.length, recommendedSeries.length]);
 
+  const moveHomeSection = (sectionId: string, direction: 'up' | 'down') => {
+    const allIds = [...defaultHomeSectionOrder, ...customSections.map(s => s.id)];
+    
+    // Get current order, ensuring all sections (including new custom ones) are included
+    const currentSavedOrder = homeSectionOrder.length > 0 ? homeSectionOrder : [];
+    const known = new Set(currentSavedOrder);
+    const missing = allIds.filter(id => !known.has(id));
+    const fullOrder = [...currentSavedOrder, ...missing];
+    
+    const index = fullOrder.indexOf(sectionId);
+    if (index === -1) return;
+    
+    const swapIndex = direction === 'up' ? index - 1 : index + 1;
+    if (swapIndex < 0 || swapIndex >= fullOrder.length) return;
+    
+    const newOrder = [...fullOrder];
+    [newOrder[index], newOrder[swapIndex]] = [newOrder[swapIndex], newOrder[index]];
+    
+    localStorage.setItem('emby_homeSectionOrder', JSON.stringify(newOrder));
+    setHomeSectionOrder(newOrder);
+  };
+
+  const resetHomeSectionOrder = () => {
+    const defaultOrder = [...defaultHomeSectionOrder, ...customSections.map(s => s.id)];
+    localStorage.setItem('emby_homeSectionOrder', JSON.stringify(defaultOrder));
+    setHomeSectionOrder(defaultOrder);
+  };
+
   const loadCustomSections = useCallback(async () => {
     let sections: { id: string; name: string; filters: any; searchTerm: string; mediaType: string; }[] = [];
     try {
@@ -904,6 +1059,7 @@ export function Home() {
   }, [popularStatus]);
 
   useEffect(() => {
+    if (isInitialLoad) return;
     const targets: Array<{ ref: React.RefObject<HTMLDivElement | null>; onEnter: () => void }> = [
       { ref: latestMoviesRef, onEnter: loadLatestContent },
       { ref: latestEpisodesRef, onEnter: loadLatestContent },
@@ -931,7 +1087,7 @@ export function Home() {
     });
 
     return () => observer.disconnect();
-  }, [loadLatestContent, loadPopularIfNeeded, loadRecommendations]);
+  }, [isInitialLoad, loadLatestContent, loadPopularIfNeeded, loadRecommendations]);
 
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
@@ -1429,24 +1585,16 @@ export function Home() {
     return () => clearTimeout(t);
   }, [showContent]);
 
-  const savedHomeSectionOrder = (() => {
-    const saved = localStorage.getItem('emby_homeSectionOrder');
+  const savedHomeSectionOrder = useMemo(() => {
     const allIds = [...defaultHomeSectionOrder, ...customSections.map(s => s.id)];
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const known = new Set(allIds);
-          const normalized = parsed.filter((id: unknown) => typeof id === 'string' && known.has(id));
-          const missing = allIds.filter(id => !normalized.includes(id));
-          return [...normalized, ...missing];
-        }
-      } catch (error) {
-        console.error('Failed to parse home section order:', error);
-      }
+    if (homeSectionOrder.length > 0) {
+      const known = new Set(allIds);
+      const normalized = homeSectionOrder.filter((id: string) => known.has(id));
+      const missing = allIds.filter(id => !normalized.includes(id));
+      return [...normalized, ...missing];
     }
     return allIds;
-  })();
+  }, [homeSectionOrder, customSections, defaultHomeSectionOrder]);
 
   return (
     <div className="min-h-screen bg-black">
@@ -1594,10 +1742,11 @@ export function Home() {
         ) : (
         /* Content Rows */
         (() => {
-          type Section = { id: string; element: ReactElement | null };
+          type Section = { id: string; label: string; element: ReactElement | null };
           const sections: Section[] = [
             {
               id: 'continue_movies',
+              label: 'Continue Watching Movies',
               element: (
                 <MediaRow
                   title="Continue Watching Movies"
@@ -1607,6 +1756,17 @@ export function Home() {
                   onToggleFavorite={toggleFavorite}
                   favChanging={favChanging}
                   favoriteIds={favoriteIds}
+                  editMode={isEditMode}
+                  isHidden={sectionVisibility['continue_movies'] === false}
+                  onToggleVisibility={() => {
+                    setSectionVisibility(prev => {
+                      const isCurrentlyHidden = prev['continue_movies'] === false;
+                      return {
+                        ...prev,
+                        continue_movies: isCurrentlyHidden
+                      };
+                    });
+                  }}
                   icon={
                     <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                       <path d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" />
@@ -1617,6 +1777,7 @@ export function Home() {
             },
             {
               id: 'continue_tv',
+              label: 'Continue Watching Series',
               element: (
                 <MediaRow
                   title="Continue Watching Series"
@@ -1626,6 +1787,17 @@ export function Home() {
                   onToggleFavorite={toggleFavorite}
                   favChanging={favChanging}
                   favoriteIds={favoriteIds}
+                  editMode={isEditMode}
+                  isHidden={sectionVisibility['continue_tv'] === false}
+                  onToggleVisibility={() => {
+                    setSectionVisibility(prev => {
+                      const isCurrentlyHidden = prev['continue_tv'] === false;
+                      return {
+                        ...prev,
+                        continue_tv: isCurrentlyHidden
+                      };
+                    });
+                  }}
                   icon={
                     <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                       <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" />
@@ -1636,6 +1808,7 @@ export function Home() {
             },
             {
               id: 'favorites',
+              label: 'Favourites',
               element: favoriteItems.length > 0 ? (
                 <MediaRow
                   title="Favourites"
@@ -1645,6 +1818,17 @@ export function Home() {
                   onToggleFavorite={toggleFavorite}
                   favChanging={favChanging}
                   favoriteIds={favoriteIds}
+                  editMode={isEditMode}
+                  isHidden={sectionVisibility['favorites'] === false}
+                  onToggleVisibility={() => {
+                    setSectionVisibility(prev => {
+                      const isCurrentlyHidden = prev['favorites'] === false;
+                      return {
+                        ...prev,
+                        favorites: isCurrentlyHidden
+                      };
+                    });
+                  }}
                   enableDragReorder={canDragFavorites}
                   onReorder={(fromIndex, toIndex) => {
                     setFavoriteItems((prev) => {
@@ -1665,6 +1849,7 @@ export function Home() {
             },
             {
               id: 'recommended_movies',
+              label: 'Recommended Movies For You',
               element: (
                 <div ref={recommendedMoviesRef}>
                   {recommendedMovies.length > 0 && (
@@ -1677,6 +1862,17 @@ export function Home() {
                       onToggleFavorite={toggleFavorite}
                       favChanging={favChanging}
                       favoriteIds={favoriteIds}
+                      editMode={isEditMode}
+                      isHidden={sectionVisibility['recommended_movies'] === false}
+                      onToggleVisibility={() => {
+                        setSectionVisibility(prev => {
+                          const isCurrentlyHidden = prev['recommended_movies'] === false;
+                          return {
+                            ...prev,
+                            recommended_movies: isCurrentlyHidden
+                          };
+                        });
+                      }}
                       icon={
                         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                           <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
@@ -1689,6 +1885,7 @@ export function Home() {
             },
             {
               id: 'recommended_series',
+              label: 'Recommended Shows For You',
               element: (
                 <div ref={recommendedSeriesRef}>
                   {recommendedSeries.length > 0 && (
@@ -1701,6 +1898,17 @@ export function Home() {
                       onToggleFavorite={toggleFavorite}
                       favChanging={favChanging}
                       favoriteIds={favoriteIds}
+                      editMode={isEditMode}
+                      isHidden={sectionVisibility['recommended_series'] === false}
+                      onToggleVisibility={() => {
+                        setSectionVisibility(prev => {
+                          const isCurrentlyHidden = prev['recommended_series'] === false;
+                          return {
+                            ...prev,
+                            recommended_series: isCurrentlyHidden
+                          };
+                        });
+                      }}
                       icon={
                         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                           <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
@@ -1713,6 +1921,7 @@ export function Home() {
             },
             {
               id: 'trending_movies',
+              label: 'Popular Movies',
               element: (
                 <div ref={popularMoviesRef}>
                   {popularStatus === 'loaded' && popularMovies.length > 0 ? (
@@ -1726,6 +1935,17 @@ export function Home() {
                       onToggleFavorite={toggleFavorite}
                       favChanging={favChanging}
                       favoriteIds={favoriteIds}
+                      editMode={isEditMode}
+                      isHidden={sectionVisibility['trending_movies'] === false}
+                      onToggleVisibility={() => {
+                        setSectionVisibility(prev => {
+                          const isCurrentlyHidden = prev['trending_movies'] === false;
+                          return {
+                            ...prev,
+                            trending_movies: isCurrentlyHidden
+                          };
+                        });
+                      }}
                       icon={
                         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clipRule="evenodd" />
@@ -1738,6 +1958,7 @@ export function Home() {
             },
             {
               id: 'popular_tv',
+              label: 'Popular TV Shows',
               element: (
                 <div ref={popularTvRef}>
                   {popularStatus === 'loaded' && popularTVShows.length > 0 ? (
@@ -1751,6 +1972,17 @@ export function Home() {
                       onToggleFavorite={toggleFavorite}
                       favChanging={favChanging}
                       favoriteIds={favoriteIds}
+                      editMode={isEditMode}
+                      isHidden={sectionVisibility['popular_tv'] === false}
+                      onToggleVisibility={() => {
+                        setSectionVisibility(prev => {
+                          const isCurrentlyHidden = prev['popular_tv'] === false;
+                          return {
+                            ...prev,
+                            popular_tv: isCurrentlyHidden
+                          };
+                        });
+                      }}
                       icon={
                         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z" clipRule="evenodd" />
@@ -1763,6 +1995,7 @@ export function Home() {
             },
             {
               id: 'latest_movies',
+              label: 'New Movies',
               element: (
                 <div ref={latestMoviesRef}>
                   {latestStatus === 'loaded' && latestMovies.length > 0 ? (
@@ -1776,6 +2009,17 @@ export function Home() {
                       onToggleFavorite={toggleFavorite}
                       favChanging={favChanging}
                       favoriteIds={favoriteIds}
+                      editMode={isEditMode}
+                      isHidden={sectionVisibility['latest_movies'] === false}
+                      onToggleVisibility={() => {
+                        setSectionVisibility(prev => {
+                          const isCurrentlyHidden = prev['latest_movies'] === false;
+                          return {
+                            ...prev,
+                            latest_movies: isCurrentlyHidden
+                          };
+                        });
+                      }}
                       icon={
                         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
@@ -1788,6 +2032,7 @@ export function Home() {
             },
             {
               id: 'latest_episodes',
+              label: 'New Episodes',
               element: (
                 <div ref={latestEpisodesRef}>
                   {latestStatus === 'loaded' && latestEpisodes.length > 0 ? (
@@ -1800,6 +2045,17 @@ export function Home() {
                       onToggleFavorite={toggleFavorite}
                       favChanging={favChanging}
                       favoriteIds={favoriteIds}
+                      editMode={isEditMode}
+                      isHidden={sectionVisibility['latest_episodes'] === false}
+                      onToggleVisibility={() => {
+                        setSectionVisibility(prev => {
+                          const isCurrentlyHidden = prev['latest_episodes'] === false;
+                          return {
+                            ...prev,
+                            latest_episodes: isCurrentlyHidden
+                          };
+                        });
+                      }}
                       icon={
                         <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                           <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" />
@@ -1812,6 +2068,7 @@ export function Home() {
             },
             ...customSections.map(section => ({
               id: section.id,
+              label: section.name,
               element: (customSectionItems[section.id] && customSectionItems[section.id].length > 0) ? (
                 <MediaRow
                   title={section.name}
@@ -1823,6 +2080,17 @@ export function Home() {
                   favoriteIds={favoriteIds}
                   subtitle="Custom"
                   onRemove={() => removeCustomSection(section.id)}
+                  editMode={isEditMode}
+                  isHidden={sectionVisibility[section.id] === false}
+                  onToggleVisibility={() => {
+                    setSectionVisibility(prev => {
+                      const isCurrentlyHidden = prev[section.id] === false;
+                      return {
+                        ...prev,
+                        [section.id]: isCurrentlyHidden
+                      };
+                    });
+                  }}
                   icon={
                     <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                       <path d="M3 3a1 1 0 000 2h11a1 1 0 100-2H3zM3 7a1 1 0 000 2h7a1 1 0 100-2H3zM3 11a1 1 0 100 2h4a1 1 0 100-2H3zM15 8a1 1 0 10-2 0v5.586l-1.293-1.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L15 13.586V8z" />
@@ -1839,13 +2107,99 @@ export function Home() {
             .filter((section): section is Section => section !== undefined);
           const missing = sections.filter(section => !savedHomeSectionOrder.includes(section.id));
 
-          return [...ordered, ...missing]
+          const filteredSections = [...ordered, ...missing]
             .filter(section => section.element !== null && section.element !== undefined)
-            .map(section => (
-              <div key={section.id}>{section.element}</div>
-            ));
+            .filter(section => isEditMode || sectionVisibility[section.id] !== false);
+
+          return filteredSections.map((section) => {
+            // Calculate position in the FULL order, not just filtered
+            const fullIndex = savedHomeSectionOrder.indexOf(section.id);
+            const isFirst = fullIndex === 0;
+            const isLast = fullIndex === savedHomeSectionOrder.length - 1;
+            
+            const moveProps = {
+              onMoveUp: () => moveHomeSection(section.id, 'up'),
+              onMoveDown: () => moveHomeSection(section.id, 'down'),
+              canMoveUp: !isFirst,
+              canMoveDown: !isLast,
+            };
+
+            // Helper to inject props into MediaRow, even if nested
+            const injectPropsIntoMediaRow = (element: React.ReactElement<any>): React.ReactElement<any> => {
+              // Check multiple ways to identify MediaRow
+              const isMediaRow = 
+                element.type === MediaRow || // Direct comparison
+                (element.type && typeof element.type === 'object' && element.type === MediaRow) || // Memo wrapped
+                (element.props?.title && Array.isArray(element.props?.items)); // Props-based detection
+              
+              if (isMediaRow) {
+                // Merge props properly, ensuring move props override any existing ones
+                return React.cloneElement(element, {
+                  ...element.props,
+                  ...moveProps
+                });
+              }
+              
+              // If this is a wrapper element (like div), recursively process its children
+              if (element.props?.children && React.isValidElement(element.props.children)) {
+                return React.cloneElement(element, {
+                  children: injectPropsIntoMediaRow(element.props.children)
+                });
+              }
+              
+              // If children is a conditional render or fragment, handle accordingly
+              if (element.props?.children) {
+                const children = element.props.children;
+                // Handle conditional rendering that returns MediaRow or null
+                if (typeof children === 'object' && children !== null && !Array.isArray(children)) {
+                  return React.cloneElement(element, {
+                    children: React.isValidElement(children) ? injectPropsIntoMediaRow(children) : children
+                  });
+                }
+              }
+              
+              return element;
+            };
+            
+            const elementWithProps = section.element && React.isValidElement(section.element)
+              ? injectPropsIntoMediaRow(section.element as React.ReactElement<any>)
+              : section.element;
+
+            return (
+              <div key={section.id}>
+                {elementWithProps}
+              </div>
+            );
+          });
         })()
         )}
+
+        {/* Edit Mode Toggle */}
+        <div className="mt-10 pb-6 border-t border-white/5 pt-6 flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-white">Edit Home</h3>
+            <p className="text-sm text-gray-500">Toggle visibility and reorder all sections. Remove custom sections.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={resetHomeSectionOrder}
+              className="px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-lg transition-all duration-200 font-medium flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Reset Order
+            </button>
+            <button
+              onClick={() => setIsEditMode(prev => !prev)}
+              className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                isEditMode ? 'bg-white text-black' : 'bg-white/10 text-white hover:bg-white/20'
+              }`}
+            >
+              {isEditMode ? 'Done' : 'Edit'}
+            </button>
+          </div>
+        </div>
       </main>
 
       {/* Footer */}

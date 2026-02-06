@@ -139,50 +139,6 @@ export function Settings() {
     navigate('/home');
   };
 
-  const getVisibleHomeSections = () => {
-    const hasFavorites = localStorage.getItem('emby_hasFavorites') === 'true';
-    const hasPopularMovies = localStorage.getItem('emby_hasPopularMovies') === 'true';
-    const hasPopularTV = localStorage.getItem('emby_hasPopularTV') === 'true';
-
-    return allHomeSections.filter(section => {
-      if (section.id === 'favorites') return hasFavorites;
-      if (section.id === 'trending_movies') return hasPopularMovies;
-      if (section.id === 'popular_tv') return hasPopularTV;
-      return true;
-    });
-  };
-
-  const getVisibleOrder = (order: string[]) => {
-    const visibleSections = getVisibleHomeSections();
-    const visibleIds = new Set(visibleSections.map(section => section.id));
-    const normalized = order.filter(id => visibleIds.has(id));
-    const missing = visibleSections
-      .map(section => section.id)
-      .filter(id => !normalized.includes(id));
-    return [...normalized, ...missing];
-  };
-
-  const persistHomeSectionOrder = (order: string[]) => {
-    const normalized = getVisibleOrder(order);
-    setHomeSectionOrder(normalized);
-    localStorage.setItem('emby_homeSectionOrder', JSON.stringify(normalized));
-  };
-
-  const moveHomeSection = (sectionId: string, direction: 'up' | 'down') => {
-    const visibleOrder = getVisibleOrder(homeSectionOrder);
-    const index = visibleOrder.indexOf(sectionId);
-    if (index === -1) return;
-    const swapIndex = direction === 'up' ? index - 1 : index + 1;
-    if (swapIndex < 0 || swapIndex >= visibleOrder.length) return;
-    const updated = [...visibleOrder];
-    [updated[index], updated[swapIndex]] = [updated[swapIndex], updated[index]];
-    persistHomeSectionOrder(updated);
-  };
-
-  const resetHomeSectionOrder = () => {
-    persistHomeSectionOrder(getVisibleHomeSections().map(section => section.id));
-  };
-
   const sections = [
     { id: 'home' as const, label: 'Home Screen', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
     { id: 'recommendations' as const, label: 'Recommendations', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z' },
@@ -382,71 +338,23 @@ export function Settings() {
                 )}
               </div>
 
-              {/* Section Order */}
+              {/* Section Order - Moved to Home Screen */}
               <div className="bg-gray-900/50 rounded-xl border border-gray-800/70 overflow-hidden backdrop-blur-sm">
-                <div className="p-6 border-b border-gray-800/70 flex items-center justify-between">
-                  <div>
-                    <p className="text-white font-semibold text-lg">Content Sections Order</p>
-                    <p className="text-sm text-gray-400 mt-1">Drag or use buttons to reorder home sections</p>
+                <div className="p-6">
+                  <div className="flex items-start gap-4">
+                    <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-blue-600/20 flex items-center justify-center">
+                      <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-white font-semibold text-lg mb-2">Content Sections Order</p>
+                      <p className="text-sm text-gray-400 leading-relaxed">
+                        Section ordering and visibility controls have been moved to the Home screen for easier access. 
+                        Scroll to the bottom of the Home screen and click the <span className="text-white font-medium">Edit</span> button to customize your sections.
+                      </p>
+                    </div>
                   </div>
-                  <button
-                    onClick={resetHomeSectionOrder}
-                    className="px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-lg transition-all duration-200 hover:scale-105 font-medium flex items-center gap-2"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    Reset
-                  </button>
-                </div>
-                <div className="divide-y divide-gray-800/70 max-h-[500px] overflow-y-auto">
-                  {(() => {
-                    const visibleOrder = getVisibleOrder(homeSectionOrder);
-                    return visibleOrder.map((sectionId, index) => {
-                    const section = allHomeSections.find(item => item.id === sectionId);
-                    if (!section) return null;
-                    const isFirst = index === 0;
-                    const isLast = index === visibleOrder.length - 1;
-                    return (
-                      <div key={section.id} className="flex items-center justify-between p-4 hover:bg-white/5 transition-colors">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center text-sm font-bold">
-                            {index + 1}
-                          </div>
-                          <p className="text-white font-medium">{section.label}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => moveHomeSection(section.id, 'up')}
-                            className={`p-2 rounded-lg transition-all duration-200 ${
-                              isFirst ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-gray-800/50 text-blue-300 hover:bg-gray-700 hover:scale-110'
-                            }`}
-                            disabled={isFirst}
-                            aria-label={`Move ${section.label} up`}
-                            title="Move up"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                            </svg>
-                          </button>
-                          <button
-                            onClick={() => moveHomeSection(section.id, 'down')}
-                            className={`p-2 rounded-lg transition-all duration-200 ${
-                              isLast ? 'bg-gray-800 text-gray-600 cursor-not-allowed' : 'bg-gray-800/50 text-blue-300 hover:bg-gray-700 hover:scale-110'
-                            }`}
-                            disabled={isLast}
-                            aria-label={`Move ${section.label} down`}
-                            title="Move down"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  });
-                  })()}
                 </div>
               </div>
             </div>

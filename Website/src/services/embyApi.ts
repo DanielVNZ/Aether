@@ -285,7 +285,6 @@ class EmbyApiService {
       const cacheKey = this.getCacheKey('getItems', params);
       const cached = this.getFromCache<ItemsResponse>(cacheKey);
       if (cached) {
-        console.log('Using cached items:', params.includeItemTypes);
         return cached;
       }
     }
