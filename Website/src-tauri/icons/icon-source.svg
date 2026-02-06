@@ -1,0 +1,28 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="1024"
+  height="1024"
+  viewBox="0 0 1024 1024"
+  fill="none"
+>
+  <!-- Background -->
+  <rect width="1024" height="1024" fill="#1a1a1a"/>
+
+  <!-- Outer frame (centered and scaled) -->
+  <rect
+    x="112"
+    y="112"
+    width="800"
+    height="800"
+    rx="160"
+    stroke="white"
+    stroke-width="40"
+    fill="none"
+  />
+
+  <!-- Play button (centered and scaled) -->
+  <polygon
+    points="432,312 432,712 688,512"
+    fill="white"
+  />
+</svg>

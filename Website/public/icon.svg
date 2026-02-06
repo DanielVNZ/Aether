@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="aetherGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#8B5CF6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#EC4899;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Outer ring - ethereal glow -->
+  <circle cx="50" cy="50" r="45" fill="none" stroke="url(#aetherGradient)" stroke-width="2" opacity="0.3"/>
+
+  <!-- Main "A" shape -->
+  <path d="M 50 20 L 70 70 L 62 70 L 58 58 L 42 58 L 38 70 L 30 70 Z M 45 50 L 55 50 L 50 32 Z"
+        fill="url(#aetherGradient)"/>
+
+  <!-- Play button triangle integrated into the "A" -->
+  <path d="M 47 62 L 47 78 L 57 70 Z"
+        fill="url(#aetherGradient)" opacity="0.9"/>
+
+  <!-- Decorative dots - cosmic elements -->
+  <circle cx="20" cy="30" r="2" fill="url(#aetherGradient)" opacity="0.6"/>
+  <circle cx="80" cy="35" r="1.5" fill="url(#aetherGradient)" opacity="0.5"/>
+  <circle cx="25" cy="75" r="1.5" fill="url(#aetherGradient)" opacity="0.7"/>
+  <circle cx="75" cy="80" r="2" fill="url(#aetherGradient)" opacity="0.6"/>
+</svg>

@@ -1,0 +1,39 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="420"
+  height="120"
+  viewBox="0 0 420 120"
+  fill="none"
+>
+  <!-- Logo Icon -->
+  <g transform="translate(10, 20)">
+    <!-- Outer frame -->
+    <rect
+      x="0"
+      y="0"
+      width="80"
+      height="80"
+      rx="16"
+      stroke="white"
+      stroke-width="4"
+    />
+    <!-- Play button -->
+    <polygon
+      points="32,24 32,56 58,40"
+      fill="white"
+    />
+  </g>
+
+  <!-- Text -->
+  <text
+    x="130"
+    y="83"
+    fill="white"
+    font-size="64"
+    font-weight="600"
+    font-family="Inter, Segoe UI, Roboto, Arial, sans-serif"
+    letter-spacing="1"
+  >
+    Aether
+  </text>
+</svg>
