@@ -404,8 +404,38 @@ class EmbyApiService {
     return `${this.baseUrl}/emby/Videos/${itemId}/master.m3u8?${params.toString()}`;
   }
 
-  getSubtitleUrl(itemId: string, mediaSourceId: string, subtitleIndex: number): string {
-    return `${this.baseUrl}/emby/Videos/${itemId}/${mediaSourceId}/Subtitles/${subtitleIndex}/Stream.vtt?api_key=${this.accessToken}`;
+  getSubtitleUrl(
+    itemId: string,
+    mediaSourceId: string,
+    subtitleIndex: number,
+    options?: {
+      format?: string;
+      startPositionTicks?: number;
+      endPositionTicks?: number;
+      copyTimestamps?: boolean;
+      useProxy?: boolean;
+    }
+  ): string {
+    const format = options?.format || 'vtt';
+    const params = new URLSearchParams();
+    if (options?.startPositionTicks !== undefined) {
+      params.set('StartPositionTicks', String(Math.max(0, Math.floor(options.startPositionTicks))));
+    }
+    if (options?.endPositionTicks !== undefined) {
+      params.set('EndPositionTicks', String(Math.max(0, Math.floor(options.endPositionTicks))));
+    }
+    if (options?.copyTimestamps !== undefined) {
+      params.set('CopyTimestamps', options.copyTimestamps ? 'true' : 'false');
+    }
+    const query = params.toString();
+    const url = `${this.baseUrl}/emby/Videos/${itemId}/${mediaSourceId}/Subtitles/${subtitleIndex}/Stream.${format}${query ? `?${query}` : ''}`;
+  
+    // Dev server proxy to avoid CORS on subtitle track requests
+    if (import.meta.env.DEV && options?.useProxy !== false) {
+      return `/emby-proxy?url=${encodeURIComponent(url)}`;
+    }
+
+    return url;
   }
 
   // Playback reporting methods

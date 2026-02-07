@@ -1,7 +1,7 @@
 {
   "name": "aether",
   "private": true,
-  "version": "3.0.5",
+  "version": "3.0.9",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -18,11 +18,13 @@
     "@tailwindcss/postcss": "^4.1.18",
     "@types/video.js": "^7.3.58",
     "autoprefixer": "^10.4.23",
+    "fflate": "^0.8.2",
     "hls.js": "^1.6.15",
     "postcss": "^8.5.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.0",
+    "shaka-player": "^5.0.0",
     "tailwindcss": "^4.1.18",
     "video.js": "^8.23.4"
   },

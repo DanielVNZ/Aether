@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Aether",
-  "version": "3.0.7",
+  "version": "3.0.9",
   "identifier": "com.aether.app",
   "build": {
     "frontendDist": "../dist",
@@ -31,12 +31,14 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "appimage", "deb", "tar.gz"],
     "publisher": "DanielVNZ",
     "copyright": "Copyright © 2026 DanielVNZ",
     "shortDescription": "Aether - Media streaming client",
     "longDescription": "Aether is a modern media streaming client for Emby servers.",
+    "category": "Utility",
     "icon": [
+      "icons/icon.png",
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",

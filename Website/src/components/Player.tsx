@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { unzipSync, strFromU8 } from 'fflate';
 import { useParams, useNavigate } from 'react-router-dom';
 import Hls from 'hls.js';
+import shaka from 'shaka-player/dist/shaka-player.ui.js';
 import { embyApi } from '../services/embyApi';
 import { MediaSelector } from './MediaSelector';
 // Inline skeleton replaces full-screen loading
@@ -11,8 +13,10 @@ export function Player() {
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const shakaRef = useRef<shaka.Player | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const useShaka = localStorage.getItem('emby_videoPlayer') === 'shaka';
 
   const [item, setItem] = useState<EmbyItem | null>(null);
   const [mediaSources, setMediaSources] = useState<MediaSource[]>([]);
@@ -26,12 +30,20 @@ export function Player() {
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showZoomMenu, setShowZoomMenu] = useState(false);
   const [selectedAudioIndex, setSelectedAudioIndex] = useState<number | undefined>();
-  const [selectedSubtitleIndex, setSelectedSubtitleIndex] = useState<number | null>(null);
+  const [customSubtitleUrl, setCustomSubtitleUrl] = useState<string>('');
+  const [customSubtitleLabel, setCustomSubtitleLabel] = useState<string>('');
+  const [subdlResults, setSubdlResults] = useState<any[]>([]);
+  const [subdlTitles, setSubdlTitles] = useState<any[]>([]);
+  const [subdlSelectedTitleId, setSubdlSelectedTitleId] = useState<string>('');
+  const [subdlError, setSubdlError] = useState<string>('');
+  const [isSubdlSearching, setIsSubdlSearching] = useState(false);
+  const [subdlManualQuery, setSubdlManualQuery] = useState<string>('');
   const [selectedFilter, setSelectedFilter] = useState<string>(() => localStorage.getItem('player_videoFilter') || 'normal');
   const [videoZoom, setVideoZoom] = useState<number>(() => parseFloat(localStorage.getItem('player_videoZoom') || '1.0'));
   const [autoZoomEnabled, setAutoZoomEnabled] = useState<boolean>(() => localStorage.getItem('player_videoZoom') === 'auto');
   const [detectedZoom, setDetectedZoom] = useState<number>(1.0);
   const [detectedOffset, setDetectedOffset] = useState<number>(0);
+  const [autoZoomLocked, setAutoZoomLocked] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [showControls, setShowControls] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -83,17 +95,37 @@ export function Player() {
   const statsIntervalRef = useRef<number | null>(null);
   const hideTimeoutRef = useRef<number | null>(null);
   const progressIntervalRef = useRef<number | null>(null);
+  const loadTimeoutRef = useRef<number | null>(null);
+  const loadTokenRef = useRef<number>(0);
+  const playbackHandlersRef = useRef<{
+    pause: () => void;
+    play: () => void;
+    ended: () => void;
+  } | null>(null);
   const lastReportedTimeRef = useRef<number>(0);
   const isSeekingRef = useRef<boolean>(false);
   const autoZoomIntervalRef = useRef<number | null>(null);
+  const autoZoomLockedRef = useRef<boolean>(false);
+  const autoZoomSampleStartRef = useRef<number | null>(null);
+  const autoZoomSamplesRef = useRef<{ zoom: number; offset: number }[]>([]);
+  const autoZoomCandidateRef = useRef<{ zoom: number; offset: number } | null>(null);
   // Keyboard hold-to-seek for seek bar
   const seekHoldIntervalRef = useRef<number | null>(null);
   const seekHoldDirRef = useRef<'left' | 'right' | null>(null);
   const seekHoldStartRef = useRef<number>(0);
   // Focus target for moving from sliders
   const playButtonFocusRef = useRef<HTMLButtonElement>(null);
+  const lastSubdlSearchKeyRef = useRef<string>('');
+  const subtitleBlobUrlRef = useRef<string>('');
 
   const isAndroidTV = /Android/i.test(navigator.userAgent);
+
+  // Install Shaka Player polyfills
+  useEffect(() => {
+    if (useShaka) {
+      shaka.polyfill.installAll();
+    }
+  }, []);
 
   useEffect(() => {
     if (id) {
@@ -103,6 +135,13 @@ export function Player() {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
+      if (shakaRef.current) {
+        console.log('Destroying previous Shaka instance');
+        shakaRef.current.destroy();
+        shakaRef.current = null;
+      }
+      // Invalidate any in-flight loads to avoid double-init in React strict mode
+      loadTokenRef.current += 1;
       if (progressIntervalRef.current) {
         console.log('Clearing previous progress interval');
         clearInterval(progressIntervalRef.current);
@@ -111,6 +150,10 @@ export function Player() {
       if (hideTimeoutRef.current) {
         clearTimeout(hideTimeoutRef.current);
         hideTimeoutRef.current = null;
+      }
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+        loadTimeoutRef.current = null;
       }
       
       // Reset state for new video
@@ -138,11 +181,23 @@ export function Player() {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
+      if (shakaRef.current) {
+        shakaRef.current.destroy();
+        shakaRef.current = null;
+      }
       if (hideTimeoutRef.current) {
         clearTimeout(hideTimeoutRef.current);
       }
       if (progressIntervalRef.current) {
         clearInterval(progressIntervalRef.current);
+      }
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+        loadTimeoutRef.current = null;
+      }
+      if (subtitleBlobUrlRef.current) {
+        URL.revokeObjectURL(subtitleBlobUrlRef.current);
+        subtitleBlobUrlRef.current = '';
       }
     };
   }, [id]);
@@ -236,43 +291,30 @@ export function Player() {
     }
   }, [currentTime, duration, nextEpisode, upNextDismissed]);
 
-  // Effect to manage subtitle track visibility
+  // Effect to manage custom subtitle track visibility
   useEffect(() => {
     if (!videoRef.current) return;
     
     const video = videoRef.current;
     const textTracks = video.textTracks;
     
-    // Set all tracks to hidden first
+    // Hide all tracks first
     for (let i = 0; i < textTracks.length; i++) {
       textTracks[i].mode = 'hidden';
     }
     
-    // If a subtitle is selected, find and enable the matching track
-    if (selectedSubtitleIndex !== null && textTracks.length > 0) {
-      // Find the track that matches our selected subtitle
-      for (let i = 0; i < textTracks.length; i++) {
-        const track = textTracks[i];
-        // Enable the track if it exists
-        if (i === 0) { // We only render one track at a time based on selectedSubtitleIndex
+    if (customSubtitleUrl && textTracks.length > 0) {
+      const track = textTracks[0];
+      track.mode = 'showing';
+      // Some browsers need a tick before cues appear
+      const t = window.setTimeout(() => {
+        if (track.mode !== 'showing') {
           track.mode = 'showing';
-          
-          // Force track to reload if it hasn't loaded cues yet
-          if (track.cues === null || (track.cues && track.cues.length === 0)) {
-            // Track hasn't loaded, give it a moment
-            setTimeout(() => {
-              if (track.mode === 'showing' && (!track.cues || track.cues.length === 0)) {
-                console.log('Subtitle track failed to load, attempting to reload');
-                // Try to force reload by toggling mode
-                track.mode = 'disabled';
-                setTimeout(() => { track.mode = 'showing'; }, 50);
-              }
-            }, 500);
-          }
         }
-      }
+      }, 300);
+      return () => window.clearTimeout(t);
     }
-  }, [selectedSubtitleIndex, streamUrl]); // Also depend on streamUrl to re-apply when video changes
+  }, [customSubtitleUrl]);
 
   // Effect to handle fullscreen changes
   useEffect(() => {
@@ -437,9 +479,23 @@ export function Player() {
       if (!autoZoomEnabled) {
         setDetectedZoom(1.0);
         setDetectedOffset(0);
+        setAutoZoomLocked(false);
+        autoZoomLockedRef.current = false;
+        autoZoomSampleStartRef.current = null;
+        autoZoomSamplesRef.current = [];
+        autoZoomCandidateRef.current = null;
       }
       return;
     }
+
+    // Reset lock/sampling for each new auto-zoom session
+    setDetectedZoom(1.0);
+    setDetectedOffset(0);
+    setAutoZoomLocked(false);
+    autoZoomLockedRef.current = false;
+    autoZoomSampleStartRef.current = null;
+    autoZoomSamplesRef.current = [];
+    autoZoomCandidateRef.current = null;
 
     const video = videoRef.current;
     
@@ -452,8 +508,18 @@ export function Player() {
     
     if (!ctx) return;
 
+    const getMedian = (values: number[]): number => {
+      if (values.length === 0) return 1.0;
+      const sorted = [...values].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 === 0
+        ? (sorted[mid - 1] + sorted[mid]) / 2
+        : sorted[mid];
+    };
+
     const detectBlackBars = () => {
       if (!video || video.readyState < 2 || video.videoWidth === 0) return;
+      if (autoZoomLockedRef.current) return;
       
       // Set canvas size to match video
       const width = video.videoWidth;
@@ -565,35 +631,39 @@ export function Player() {
             
             // Calculate vertical offset to center the content
             const offsetPercent = ((topBlackBarHeight - bottomBlackBarHeight) / height) * 100 * zoomFactor;
-            
-            // Apply some smoothing to avoid jittery adjustments
-            setDetectedZoom(prev => {
-              const diff = Math.abs(prev - zoomFactor);
-              // Only update if change is significant (more than 0.02)
-              if (diff > 0.02) {
-                return zoomFactor;
+
+            const now = performance.now();
+            if (!autoZoomSampleStartRef.current) {
+              autoZoomSampleStartRef.current = now;
+            }
+            autoZoomSamplesRef.current.push({ zoom: zoomFactor, offset: offsetPercent });
+
+            if (!autoZoomCandidateRef.current) {
+              autoZoomCandidateRef.current = { zoom: zoomFactor, offset: offsetPercent };
+              setDetectedZoom(zoomFactor);
+              setDetectedOffset(offsetPercent);
+            }
+
+            const start = autoZoomSampleStartRef.current;
+            if (start && now - start >= 10000) {
+              const samples = autoZoomSamplesRef.current;
+              if (samples.length > 0) {
+                const medianZoom = getMedian(samples.map(s => s.zoom));
+                const medianOffset = getMedian(samples.map(s => s.offset));
+                setDetectedZoom(medianZoom);
+                setDetectedOffset(medianOffset);
               }
-              return prev;
-            });
-            
-            setDetectedOffset(prev => {
-              const diff = Math.abs(prev - offsetPercent);
-              // Only update if change is significant
-              if (diff > 0.5) {
-                return offsetPercent;
+              setAutoZoomLocked(true);
+              autoZoomLockedRef.current = true;
+              if (autoZoomIntervalRef.current) {
+                clearInterval(autoZoomIntervalRef.current);
+                autoZoomIntervalRef.current = null;
               }
-              return prev;
-            });
-          } else {
-            // Bars not dark enough compared to content - likely a dark scene, not letterbox
-            setDetectedZoom(1.0);
-            setDetectedOffset(0);
+            }
           }
-        } else {
-          // No significant black bars detected
-          setDetectedZoom(1.0);
-          setDetectedOffset(0);
+          // If bars are not dark enough compared to content, treat as invalid and keep waiting
         }
+        // If no significant black bars detected, treat as invalid and keep waiting
       } catch (err) {
         console.error('Error detecting black bars:', err);
       }
@@ -628,6 +698,337 @@ export function Player() {
         setShowControls(false);
       }
     }, 3000);
+  };
+
+  const getSubdlSearchParams = async (override?: { useFullSeason?: boolean; useSelectedTitle?: boolean }) => {
+    const apiKey = localStorage.getItem('subdl_apiKey') || '';
+    const languages = (localStorage.getItem('subdl_languages') || 'EN').trim();
+    if (!apiKey || !item) return null;
+
+    const params: Record<string, string> = { api_key: apiKey };
+    if (languages) params.languages = languages;
+
+    let imdbId = item.ProviderIds?.Imdb;
+    let tmdbId = item.ProviderIds?.Tmdb;
+    const manualQuery = subdlManualQuery.trim();
+    if (manualQuery) {
+      params.film_name = manualQuery;
+      params.type = item.Type === 'Episode' ? 'tv' : 'movie';
+      if (item.ParentIndexNumber) params.season_number = String(item.ParentIndexNumber);
+      if (item.IndexNumber) params.episode_number = String(item.IndexNumber);
+      if (item.ProductionYear) params.year = String(item.ProductionYear);
+      if (override?.useFullSeason) params.full_season = '1';
+      params.subs_per_page = '30';
+      return params;
+    }
+    const useSelectedTitle = (override?.useSelectedTitle ?? true) && subdlSelectedTitleId;
+    if (useSelectedTitle) {
+      params.sd_id = subdlSelectedTitleId;
+      params.type = item.Type === 'Episode' ? 'tv' : 'movie';
+      if (item.ParentIndexNumber) params.season_number = String(item.ParentIndexNumber);
+      if (item.IndexNumber) params.episode_number = String(item.IndexNumber);
+      if (override?.useFullSeason) params.full_season = '1';
+      params.subs_per_page = '30';
+      return params;
+    }
+
+    if (item.Type === 'Episode') {
+      params.type = 'tv';
+      if ((!imdbId && !tmdbId) && item.SeriesId) {
+        try {
+          const seriesItem = await embyApi.getItem(item.SeriesId);
+          imdbId = seriesItem?.ProviderIds?.Imdb || imdbId;
+          tmdbId = seriesItem?.ProviderIds?.Tmdb || tmdbId;
+        } catch (err) {
+          // Silent: fallback to name search if series IDs are unavailable
+        }
+      }
+      if (imdbId) params.imdb_id = imdbId;
+      if (tmdbId) params.tmdb_id = tmdbId;
+      const hasStrongId = Boolean(imdbId || tmdbId);
+      if (!hasStrongId) params.film_name = item.SeriesName || item.Name;
+      if (item.ParentIndexNumber) params.season_number = String(item.ParentIndexNumber);
+      if (item.IndexNumber) params.episode_number = String(item.IndexNumber);
+      if (item.ProductionYear) params.year = String(item.ProductionYear);
+      if (override?.useFullSeason) params.full_season = '1';
+    } else {
+      params.type = 'movie';
+      if (imdbId) params.imdb_id = imdbId;
+      if (tmdbId) params.tmdb_id = tmdbId;
+      const hasStrongId = Boolean(imdbId || tmdbId);
+      if (!hasStrongId) params.film_name = item.Name;
+      if (item.ProductionYear) params.year = String(item.ProductionYear);
+    }
+
+    params.subs_per_page = '30';
+    return params;
+  };
+
+  const searchSubdlSubtitles = async () => {
+    const params = await getSubdlSearchParams();
+    if (!params) {
+      setSubdlError('Add your SubDL API key in Settings to search for subtitles.');
+      return;
+    }
+
+    setIsSubdlSearching(true);
+    setSubdlError('');
+    setSubdlResults([]);
+    setSubdlTitles([]);
+
+    const runSearch = async (searchParams: Record<string, string>) => {
+      const query = new URLSearchParams(searchParams).toString();
+      const response = await fetch(`https://api.subdl.com/api/v1/subtitles?${query}`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      });
+      const data = await response.json();
+      return data;
+    };
+
+    try {
+      let data = await runSearch(params);
+      if (!data?.status && typeof data?.error === 'string' && data.error.toLowerCase().includes("can't find movie or tv")) {
+        // Fallback 1: drop IDs (they might be episode IDs), keep season/episode with series name
+        const fallbackParams = { ...params };
+        delete fallbackParams.imdb_id;
+        delete fallbackParams.tmdb_id;
+        if (item?.Type === 'Episode') {
+          fallbackParams.type = 'tv';
+          fallbackParams.film_name = item.SeriesName || item.Name;
+        }
+        data = await runSearch(fallbackParams);
+
+        // Fallback 2: broader TV search without season/episode/year
+        if (!data?.status && typeof data?.error === 'string' && data.error.toLowerCase().includes("can't find movie or tv")) {
+          const fallbackBroad = { ...fallbackParams };
+          delete fallbackBroad.episode_number;
+          delete fallbackBroad.season_number;
+          delete fallbackBroad.year;
+          fallbackBroad.full_season = '1';
+          data = await runSearch(fallbackBroad);
+        }
+      }
+
+      if (!data?.status) {
+        setSubdlError(data?.error || 'SubDL search failed.');
+        setIsSubdlSearching(false);
+        return;
+      }
+
+      const titles = Array.isArray(data?.results) ? data.results : [];
+      setSubdlTitles(titles);
+      if (titles.length > 0 && !subdlSelectedTitleId) {
+        const firstId = String(titles[0]?.sd_id ?? '');
+        if (firstId) setSubdlSelectedTitleId(firstId);
+      }
+
+      let subtitles = Array.isArray(data?.subtitles) ? data.subtitles : [];
+      if (item?.Type === 'Episode' && item.ParentIndexNumber && item.IndexNumber) {
+        const seasonTarget = item.ParentIndexNumber;
+        const episodeTarget = item.IndexNumber;
+        const matchEpisode = (sub: any) => {
+          const season =
+            sub?.season_number ?? sub?.season ?? sub?.seasonNumber ?? sub?.season_num ?? sub?.seasonNo ?? sub?.s;
+          const episode =
+            sub?.episode_number ?? sub?.episode ?? sub?.episodeNumber ?? sub?.episode_num ?? sub?.episodeNo ?? sub?.e;
+          const episodeFrom =
+            sub?.episode_from ?? sub?.episodeFrom ?? sub?.from_episode ?? sub?.from ?? sub?.episode_start;
+          const episodeEnd =
+            sub?.episode_end ?? sub?.episodeEnd ?? sub?.to_episode ?? sub?.to ?? sub?.episode_stop;
+
+          if (season == null) return false;
+          if (Number(season) !== seasonTarget) return false;
+
+          if (episode != null) {
+            return Number(episode) === episodeTarget;
+          }
+          if (episodeFrom != null && episodeEnd != null) {
+            const start = Number(episodeFrom);
+            const end = Number(episodeEnd);
+            return episodeTarget >= start && episodeTarget <= end;
+          }
+          return false;
+        };
+        const exact = subtitles.filter(matchEpisode);
+          if (exact.length === 0 && subtitles.length > 0) {
+            // Keep list as-is; full-season fallback may still apply.
+          }
+        if (exact.length > 0) {
+          subtitles = exact;
+        }
+      }
+      if (item?.Type === 'Episode' && subtitles.length === 0) {
+        const fullSeasonParams = await getSubdlSearchParams({ useFullSeason: true, useSelectedTitle: true });
+        if (fullSeasonParams) {
+          const fullSeasonData = await runSearch(fullSeasonParams);
+          if (fullSeasonData?.status) {
+            const fullSubs = Array.isArray(fullSeasonData?.subtitles) ? fullSeasonData.subtitles : [];
+            if (fullSubs.length > 0) {
+              subtitles = fullSubs;
+            }
+          }
+        }
+      }
+      if (subtitles.length === 0) {
+        setSubdlError('No subtitles found for this title.');
+      }
+      setSubdlResults(subtitles);
+    } catch (err) {
+      console.error('SubDL search failed:', err);
+      setSubdlError('SubDL search failed. Please try again.');
+    } finally {
+      setIsSubdlSearching(false);
+    }
+  };
+
+  const extractSubtitleDownloadUrl = (subtitle: any): string | null => {
+    const link = subtitle?.download_link || subtitle?.link || subtitle?.url || subtitle?.file;
+    if (typeof link === 'string' && link.length > 0) {
+      if (link.startsWith('http://') || link.startsWith('https://')) return link;
+      if (link.startsWith('/')) return `https://dl.subdl.com${link}`;
+      if (link.startsWith('subtitle/')) return `https://dl.subdl.com/${link}`;
+      if (link.endsWith('.zip')) return `https://dl.subdl.com/${link}`;
+      return link;
+    }
+
+    const id = subtitle?.subtitle_id || subtitle?.id || subtitle?.sd_id || subtitle?.sid;
+    if (id) return `https://dl.subdl.com/subtitle/${id}.zip`;
+    return null;
+  };
+
+  const srtToVtt = (srt: string): string => {
+    const cleaned = srt.replace(/^\uFEFF/, '');
+    const vtt = cleaned
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+    return `WEBVTT\n\n${vtt}`;
+  };
+
+  const pickSubtitleEntry = (entries: string[], season?: number, episode?: number): string => {
+    const lower = entries.map(name => name.toLowerCase());
+    const s = season ?? 0;
+    const e = episode ?? 0;
+    const s2 = s.toString().padStart(2, '0');
+    const e2 = e.toString().padStart(2, '0');
+
+    const byExt = (ext: string) => entries.filter(name => name.toLowerCase().endsWith(ext));
+    const vtt = byExt('.vtt');
+    const srt = byExt('.srt');
+    const candidates = (vtt.length > 0 ? vtt : srt.length > 0 ? srt : entries);
+
+    if (season && episode) {
+      const patterns = [
+        new RegExp(`s${s2}e${e2}`, 'i'),
+        new RegExp(`s${s}e${e}`, 'i'),
+        new RegExp(`${s2}x${e2}`, 'i'),
+        new RegExp(`${s}x${e}`, 'i'),
+        new RegExp(`s0?${s}e0?${e}`, 'i'),
+        new RegExp(`season\\s*${s}.*episode\\s*${e}`, 'i'),
+      ];
+      for (const pattern of patterns) {
+        const idx = lower.findIndex(name => pattern.test(name));
+        if (idx >= 0) {
+          return entries[idx];
+        }
+      }
+      // Fallback: match episode only when season-specific patterns fail
+      const episodeOnlyPatterns = [
+        new RegExp(`e${e2}`, 'i'),
+        new RegExp(`e${e}`, 'i'),
+        new RegExp(`ep\\s*${e2}`, 'i'),
+        new RegExp(`ep\\s*${e}`, 'i'),
+      ];
+      for (const pattern of episodeOnlyPatterns) {
+        const idx = lower.findIndex(name => pattern.test(name));
+        if (idx >= 0) {
+          return entries[idx];
+        }
+      }
+    }
+
+    const fallback = candidates[0] || entries[0];
+    return fallback;
+  };
+
+  const applySubtitleFromZip = async (zipBuffer: ArrayBuffer, subtitleLabel: string) => {
+    const zipped = new Uint8Array(zipBuffer);
+    const unzipped = unzipSync(zipped);
+
+    const entries = Object.keys(unzipped);
+    if (entries.length === 0) {
+      throw new Error('Subtitle archive was empty.');
+    }
+
+    const chosen = pickSubtitleEntry(entries, item?.ParentIndexNumber, item?.IndexNumber);
+    const content = unzipped[chosen];
+    if (!content) {
+      throw new Error('Subtitle file not found in archive.');
+    }
+
+    let subtitleText = strFromU8(content);
+    if (chosen.toLowerCase().endsWith('.srt')) {
+      subtitleText = srtToVtt(subtitleText);
+    }
+
+    if (subtitleBlobUrlRef.current) {
+      URL.revokeObjectURL(subtitleBlobUrlRef.current);
+    }
+    const blob = new Blob([subtitleText], { type: 'text/vtt' });
+    const url = URL.createObjectURL(blob);
+    subtitleBlobUrlRef.current = url;
+    setCustomSubtitleUrl(url);
+    setCustomSubtitleLabel(subtitleLabel);
+  };
+
+  const applySubtitleFromText = (subtitleText: string, subtitleLabel: string, formatHint?: string) => {
+    let text = subtitleText;
+    if (formatHint === 'srt' || (!subtitleText.startsWith('WEBVTT') && subtitleText.includes('-->'))) {
+      text = srtToVtt(subtitleText);
+    }
+
+    if (subtitleBlobUrlRef.current) {
+      URL.revokeObjectURL(subtitleBlobUrlRef.current);
+    }
+    const blob = new Blob([text], { type: 'text/vtt' });
+    const url = URL.createObjectURL(blob);
+    subtitleBlobUrlRef.current = url;
+    setCustomSubtitleUrl(url);
+    setCustomSubtitleLabel(subtitleLabel);
+  };
+
+  const downloadAndApplySubdlSubtitle = async (subtitle: any) => {
+    try {
+      const url = extractSubtitleDownloadUrl(subtitle);
+      if (!url) {
+        setSubdlError('Unable to determine subtitle download URL.');
+        return;
+      }
+      setSubdlError('');
+      const response = await fetch(url);
+      if (!response.ok) {
+        setSubdlError('Failed to download subtitle.');
+        return;
+      }
+      const buffer = await response.arrayBuffer();
+      const label = subtitle?.language || subtitle?.lang || subtitle?.release || subtitle?.name || 'Subtitle';
+
+      const bytes = new Uint8Array(buffer);
+      const isZip = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b;
+      if (isZip) {
+        await applySubtitleFromZip(buffer, label);
+      } else {
+        const contentType = response.headers.get('content-type') || '';
+        const formatHint = contentType.includes('text/vtt') ? 'vtt' : 'srt';
+        const text = new TextDecoder('utf-8').decode(bytes);
+        applySubtitleFromText(text, label, formatHint);
+      }
+      setShowSubtitleMenu(false);
+    } catch (err) {
+      console.error('Failed to apply subtitle:', err);
+      setSubdlError('Failed to apply subtitle.');
+    }
   };
 
   const handleMouseLeave = () => {
@@ -666,6 +1067,21 @@ export function Player() {
       }
     };
   }, [isAndroidTV, showControls, showAudioMenu, showSubtitleMenu, showFilterMenu, showZoomMenu]);
+
+  useEffect(() => {
+    if (!showSubtitleMenu) return;
+    if (!item) return;
+    const apiKey = localStorage.getItem('subdl_apiKey') || '';
+    if (!apiKey) return;
+
+    const languages = (localStorage.getItem('subdl_languages') || 'EN').trim();
+    const searchKey = `${item.Id}:${languages}`;
+    if (lastSubdlSearchKeyRef.current === searchKey && subdlResults.length > 0) {
+      return;
+    }
+    lastSubdlSearchKeyRef.current = searchKey;
+    searchSubdlSubtitles();
+  }, [showSubtitleMenu, item?.Id]);
 
   // Helper function to get video height from media source
   const getVideoHeight = (source: MediaSource): number => {
@@ -809,19 +1225,38 @@ export function Player() {
     }
   };
 
-  const loadVideo = (url: string, startPosition: number = 0) => {
+  const loadVideo = async (url: string, startPosition: number = 0) => {
     if (!videoRef.current) return;
 
     console.log('Loading video URL:', url, 'Start position:', startPosition);
 
-    // Destroy existing HLS instance
+    const loadToken = ++loadTokenRef.current;
+    const isStale = () => loadToken !== loadTokenRef.current;
+
+    // Destroy existing player instances - await to ensure clean state
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
     }
+    if (shakaRef.current) {
+      await shakaRef.current.destroy();
+      shakaRef.current = null;
+    }
+
+    if (isStale()) return;
 
     // Add video event listeners for playback reporting
     const video = videoRef.current;
+    // Reset the media element to avoid MediaSource reuse issues
+    video.removeAttribute('src');
+    video.load();
+
+    if (playbackHandlersRef.current) {
+      video.removeEventListener('pause', playbackHandlersRef.current.pause);
+      video.removeEventListener('play', playbackHandlersRef.current.play);
+      video.removeEventListener('ended', playbackHandlersRef.current.ended);
+      playbackHandlersRef.current = null;
+    }
     
     const handlePause = () => {
       if (selectedSource) {
@@ -833,7 +1268,7 @@ export function Player() {
           PositionTicks: positionTicks,
           IsPaused: true,
           EventName: 'Pause',
-          PlayMethod: 'Transcode',
+          PlayMethod: 'DirectPlay',
         }).catch(err => console.error('Failed to report pause:', err));
       }
     };
@@ -848,7 +1283,7 @@ export function Player() {
           PositionTicks: positionTicks,
           IsPaused: false,
           EventName: 'Unpause',
-          PlayMethod: 'Transcode',
+          PlayMethod: 'DirectPlay',
         }).catch(err => console.error('Failed to report unpause:', err));
       }
     };
@@ -873,18 +1308,179 @@ export function Player() {
     video.addEventListener('pause', handlePause);
     video.addEventListener('play', handlePlay);
     video.addEventListener('ended', handleEnded);
+    playbackHandlersRef.current = { pause: handlePause, play: handlePlay, ended: handleEnded };
 
-    if (Hls.isSupported()) {
+    // Use Shaka Player if enabled
+    if (useShaka && shaka.Player.isBrowserSupported()) {
+      console.log('Using Shaka Player');
+      
+      // Create player instance
+      const player = new shaka.Player();
+      shakaRef.current = player;
+      
+        try {
+          if (isStale()) {
+            if (shakaRef.current === player) {
+              await player.destroy();
+              shakaRef.current = null;
+            }
+            return;
+          }
+          // Attach to video element first
+          await player.attach(videoRef.current);
+        if (isStale()) {
+          if (shakaRef.current === player) {
+            await player.destroy();
+            shakaRef.current = null;
+          }
+          return;
+        }
+        // Configure Shaka for optimal performance and Dolby support
+        player.configure({
+          streaming: {
+            bufferingGoal: 1800, // Buffer up to 30 minutes ahead
+            rebufferingGoal: 10,
+            bufferBehind: 300, // Keep 5 mins of back buffer
+          },
+          manifest: {
+            defaultPresentationDelay: 0,
+          },
+        });
+        
+        // Load the manifest (use startPosition to keep A/V sync)
+        await player.load(url, startPosition > 0 ? startPosition : undefined);
+        if (isStale()) {
+          if (shakaRef.current === player) {
+            await player.destroy();
+            shakaRef.current = null;
+          }
+          return;
+        }
+        
+        console.log('Shaka Player loaded, starting playback');
+        videoRef.current?.play().catch(e => {
+          if (e?.name === 'AbortError' && isStale()) return;
+          console.log('Autoplay prevented:', e);
+        });
+      } catch (error: any) {
+        // Ignore LOAD_INTERRUPTED errors - they're expected when switching streams quickly
+        if (error.code === 7000) {
+          console.log('Shaka load interrupted (switching streams), ignoring...');
+          return;
+        }
+        console.error('Shaka Player error:', error);
+        setError('Failed to load video stream with Shaka Player');
+        if (shakaRef.current === player) {
+          await player.destroy();
+          shakaRef.current = null;
+        }
+      }
+      
+      player.addEventListener('error', (event: any) => {
+        const error = event.detail;
+        console.error('Shaka Player error event:', event);
+        
+        // If Shaka has already handled the error, don't interfere
+        if (error.handled) {
+          console.log('Error already handled by Shaka Player');
+          return;
+        }
+        
+        // Check error severity: 1 = recoverable, 2 = critical
+        if (error.severity === 2) {
+          // Critical error - needs handling
+          console.error(`Shaka critical error ${error.code}:`, error);
+          
+          // Error 7000 is often auto-recovered by Shaka, give it a moment
+          if (error.code === 7000) {
+            console.log('Error 7000 detected, allowing Shaka to auto-recover...');
+            // Wait a bit to see if Shaka recovers automatically
+            setTimeout(() => {
+              // Check if playback has recovered (video is loading or playing)
+              if (videoRef.current && (
+                videoRef.current.readyState >= 2 || 
+                !videoRef.current.paused
+              )) {
+                console.log('Shaka auto-recovered from error 7000');
+                return;
+              }
+              // If not recovered, try manual recovery
+              console.log('Attempting manual recovery from error 7000...');
+              const recovered = player.retryStreaming();
+              if (!recovered) {
+                setError('Streaming error occurred');
+              }
+            }, 2000);
+            return;
+          }
+          
+          // Handle other critical errors
+          if (error.category === 1) { // Network errors
+            console.log('Network error detected, attempting recovery...');
+            const recovered = player.retryStreaming();
+            if (!recovered) {
+              setError('Network error - unable to load video stream');
+            }
+          } else if (error.category === 3) { // Manifest/Text errors
+            // Error 3015 is MEDIA_SOURCE_OPERATION_THREW - happens during cleanup when switching streams
+            // Just ignore it, it's not recoverable and not a real playback issue
+            if (error.code === 3015) {
+              console.log('MediaSource cleanup error (3015), ignoring...');
+              return;
+            }
+            // Error 3017 is SEGMENT_MISSING - happens when paused too long, server discards old segments
+            if (error.code === 3017) {
+              console.log('Segment missing error (3017), attempting recovery...');
+              const recovered = player.retryStreaming();
+              if (!recovered) {
+                // Don't show error, just retry when user resumes
+                console.warn('Could not auto-recover, playback may resume when user interacts');
+              }
+              return;
+            }
+            console.log('Manifest error detected, attempting to reload...');
+            const recovered = player.retryStreaming();
+            if (!recovered) {
+              setError('Failed to parse video manifest');
+            }
+          } else if (error.category === 7) { // Other streaming errors
+            console.log('Streaming error detected, attempting recovery...');
+            const recovered = player.retryStreaming();
+            if (!recovered) {
+              setError('Streaming error occurred');
+            }
+          } else {
+            setError(`Playback error: ${error.code}`);
+          }
+        } else {
+          // Recoverable error (severity 1) - just log it
+          console.warn(`Shaka recoverable error ${error.code}:`, error);
+        }
+      });
+      
+      shakaRef.current = player;
+    } else if (Hls.isSupported()) {
+      if (isStale()) return;
       console.log('Using HLS.js');
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
         backBufferLength: 300, // Keep 5 mins of back buffer
-        maxBufferLength: 900, // Buffer up to 15 minutes ahead
-        maxMaxBufferLength: 900,
+        maxBufferLength: 1800, // Buffer up to 30 minutes ahead
+        maxMaxBufferLength: 1800,
         maxBufferSize: 2 * 1000 * 1000 * 1000, // 2GB buffer for 4K
         maxBufferHole: 0.5,
+        // Continue buffering while paused - don't stop loading
+        startFragPrefetch: true,
       });
+      hlsRef.current = hls;
+      if (isStale()) {
+        hls.destroy();
+        if (hlsRef.current === hls) {
+          hlsRef.current = null;
+        }
+        return;
+      }
       
       hls.loadSource(url);
       hls.attachMedia(videoRef.current);
@@ -924,6 +1520,7 @@ export function Player() {
       
       hlsRef.current = hls;
     } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+      if (isStale()) return;
       // Safari native HLS support
       console.log('Using native HLS support');
       videoRef.current.src = url;
@@ -977,7 +1574,7 @@ export function Player() {
         PositionTicks: positionTicks,
         AudioStreamIndex: defaultAudio.Index,
         IsPaused: false,
-        PlayMethod: 'Transcode',
+        PlayMethod: 'DirectPlay',
       }).catch(err => console.error('Failed to report playback start:', err));
       
       // Start progress reporting interval (every 10 seconds)
@@ -998,14 +1595,20 @@ export function Player() {
               AudioStreamIndex: selectedAudioIndex,
               IsPaused: false,
               EventName: 'TimeUpdate',
-              PlayMethod: 'Transcode',
+              PlayMethod: 'DirectPlay',
             }).catch(err => console.error('Failed to report progress:', err));
           }
         }
       }, 10000);
       
       // Small delay to ensure video element is rendered
-      setTimeout(() => loadVideo(url, startPosition), 100);
+      if (loadTimeoutRef.current) {
+        clearTimeout(loadTimeoutRef.current);
+      }
+      loadTimeoutRef.current = window.setTimeout(() => {
+        loadTimeoutRef.current = null;
+        loadVideo(url, startPosition);
+      }, 100);
     }
   };
 
@@ -1029,10 +1632,14 @@ export function Player() {
       console.error('Failed to report playback stopped:', err);
     }
     
-    // Destroy current HLS instance
+    // Destroy current player instances - await Shaka to ensure clean state
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
+    }
+    if (shakaRef.current) {
+      await shakaRef.current.destroy();
+      shakaRef.current = null;
     }
     
     // Get a new playback session
@@ -1052,36 +1659,166 @@ export function Player() {
         PositionTicks: positionTicks,
         AudioStreamIndex: audioIndex,
         IsPaused: false,
-        PlayMethod: 'Transcode',
+        PlayMethod: 'DirectPlay',
       });
       
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        backBufferLength: 300,
-        maxBufferLength: 900,
-        maxMaxBufferLength: 900,
-        maxBufferSize: 2 * 1000 * 1000 * 1000,
-        maxBufferHole: 0.5,
-      });
-      
-      hls.loadSource(url);
-      hls.attachMedia(videoRef.current);
-      
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (videoRef.current) {
-          videoRef.current.currentTime = currentTime;
-          videoRef.current.play().catch(e => console.log('Autoplay prevented:', e));
-        }
-      });
-      
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          console.error('HLS fatal error:', data);
-        }
-      });
-      
-      hlsRef.current = hls;
+      // Use Shaka Player if enabled
+        if (useShaka && shaka.Player.isBrowserSupported()) {
+          const player = new shaka.Player();
+          shakaRef.current = player;
+          
+          try {
+            // Attach to video element first
+            await player.attach(videoRef.current);
+          
+          player.configure({
+            streaming: {
+              bufferingGoal: 1800,
+              rebufferingGoal: 10,
+              bufferBehind: 300,
+            },
+            manifest: {
+              defaultPresentationDelay: 0,
+            },
+          });
+          
+            await player.load(url, currentTime > 0 ? currentTime : undefined);
+            
+            videoRef.current?.play().catch(e => console.log('Autoplay prevented:', e));
+          } catch (error: any) {
+            // Ignore LOAD_INTERRUPTED errors - they're expected when switching streams quickly
+            if (error.code === 7000) {
+              console.log('Shaka load interrupted (switching audio), ignoring...');
+              return;
+            }
+            console.error('Shaka Player error:', error);
+            setError('Failed to change audio track');
+            if (shakaRef.current === player) {
+              await player.destroy();
+              shakaRef.current = null;
+            }
+          }
+        
+        // Add error event listener for runtime errors
+        player.addEventListener('error', (event: any) => {
+          const error = event.detail;
+          console.error('Shaka Player error event:', event);
+          
+          // If Shaka has already handled the error, don't interfere
+          if (error.handled) {
+            console.log('Error already handled by Shaka Player');
+            return;
+          }
+          
+          // Check error severity: 1 = recoverable, 2 = critical
+          if (error.severity === 2) {
+            // Error 3018 is INVALID_TEXT_CUE - a subtitle parsing error that's not critical
+            if (error.code === 3018) {
+              console.warn('Subtitle parsing error (3018), ignoring as non-critical:', error);
+              return;
+            }
+            
+            console.error(`Shaka critical error ${error.code}:`, error);
+            
+            // Error 7000 is often auto-recovered by Shaka, give it a moment
+            if (error.code === 7000) {
+              console.log('Error 7000 detected, allowing Shaka to auto-recover...');
+              // Wait a bit to see if Shaka recovers automatically
+              setTimeout(() => {
+                // Check if playback has recovered (video is loading or playing)
+                if (videoRef.current && (
+                  videoRef.current.readyState >= 2 || 
+                  !videoRef.current.paused
+                )) {
+                  console.log('Shaka auto-recovered from error 7000');
+                  return;
+                }
+                // If not recovered, try manual recovery
+                console.log('Attempting manual recovery from error 7000...');
+                const recovered = player.retryStreaming();
+                if (!recovered) {
+                  setError('Streaming error occurred');
+                }
+              }, 2000);
+              return;
+            }
+            
+            // Handle other critical errors
+            if (error.category === 1) { // Network errors
+              console.log('Network error detected, attempting recovery...');
+              const recovered = player.retryStreaming();
+              if (!recovered) {
+                setError('Network error - unable to load video stream');
+              }
+            } else if (error.category === 3) { // Manifest/Text errors
+              // Error 3015 is MEDIA_SOURCE_OPERATION_THREW - happens during cleanup when switching streams
+              // Just ignore it, it's not recoverable and not a real playback issue
+              if (error.code === 3015) {
+                console.log('MediaSource cleanup error (3015), ignoring...');
+                return;
+              }
+              // Error 3017 is SEGMENT_MISSING - happens when paused too long, server discards old segments
+              if (error.code === 3017) {
+                console.log('Segment missing error (3017), attempting recovery...');
+                const recovered = player.retryStreaming();
+                if (!recovered) {
+                  // Don't show error, just retry when user resumes
+                  console.warn('Could not auto-recover, playback may resume when user interacts');
+                }
+                return;
+              }
+              console.log('Manifest error detected, attempting to reload...');
+              const recovered = player.retryStreaming();
+              if (!recovered) {
+                setError('Failed to parse video manifest');
+              }
+            } else if (error.category === 7) { // Other streaming errors
+              console.log('Streaming error detected, attempting recovery...');
+              const recovered = player.retryStreaming();
+              if (!recovered) {
+                setError('Streaming error occurred');
+              }
+            } else {
+              setError(`Playback error: ${error.code}`);
+            }
+          } else {
+            // Recoverable error (severity 1) - just log it
+            console.warn(`Shaka recoverable error ${error.code}:`, error);
+          }
+        });
+        
+        shakaRef.current = player;
+      } else {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+          backBufferLength: 300,
+          maxBufferLength: 1800,
+          maxMaxBufferLength: 1800,
+          maxBufferSize: 2 * 1000 * 1000 * 1000,
+          maxBufferHole: 0.5,
+          // Continue buffering while paused - don't stop loading
+          startFragPrefetch: true,
+        });
+        
+        hls.loadSource(url);
+        hls.attachMedia(videoRef.current);
+        
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (videoRef.current) {
+            videoRef.current.currentTime = currentTime;
+            videoRef.current.play().catch(e => console.log('Autoplay prevented:', e));
+          }
+        });
+        
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) {
+            console.error('HLS fatal error:', data);
+          }
+        });
+        
+        hlsRef.current = hls;
+      }
     } catch (err) {
       console.error('Failed to change audio track:', err);
       setError('Failed to change audio track. Please try again.');
@@ -1130,10 +1867,14 @@ export function Player() {
       }
     }
     
-    // Destroy HLS instance
+    // Destroy player instances
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
+    }
+    if (shakaRef.current) {
+      shakaRef.current.destroy();
+      shakaRef.current = null;
     }
     
     navigate(`/player/${prevEpisode.Id}`, { replace: true });
@@ -1163,10 +1904,14 @@ export function Player() {
       }
     }
     
-    // Destroy HLS instance
+    // Destroy player instances
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
+    }
+    if (shakaRef.current) {
+      shakaRef.current.destroy();
+      shakaRef.current = null;
     }
     
     navigate(`/player/${nextEpisode.Id}`, { replace: true });
@@ -1599,18 +2344,24 @@ export function Player() {
             }
           >
             {/* Subtitle tracks */}
-            {selectedSource && selectedSubtitleIndex !== null && selectedSource.MediaStreams
-              .filter(s => s.Type === 'Subtitle' && s.IsTextSubtitleStream && s.Index === selectedSubtitleIndex)
-              .map((stream) => (
-                <track
-                  key={`${stream.Index}-${streamUrl}`}
-                  kind="subtitles"
-                  label={stream.DisplayTitle || stream.Language || 'Subtitles'}
-                  srcLang={stream.Language || 'und'}
-                  src={embyApi.getSubtitleUrl(id!, selectedSource.Id, stream.Index)}
-                  default
-                />
-              ))}
+            {customSubtitleUrl && (
+              <track
+                key={`subdl-${customSubtitleUrl}`}
+                kind="subtitles"
+                label={customSubtitleLabel || 'Subtitles'}
+                srcLang="und"
+                src={customSubtitleUrl}
+                default
+                onLoad={() => {
+                  const video = videoRef.current;
+                  if (!video) return;
+                  if (video.textTracks.length > 0) {
+                    video.textTracks[0].mode = 'showing';
+                  }
+                }}
+                onError={() => {}}
+              />
+            )}
           </video>
 
           {/* Stats for nerds panel */}
@@ -2067,7 +2818,7 @@ export function Player() {
                       <div className="font-medium">{preset.label}</div>
                       {preset.value === 'auto' && autoZoomEnabled && detectedZoom > 1.0 && (
                         <div className="text-xs text-gray-400 mt-1">
-                          Detected: {(detectedZoom * 100).toFixed(0)}%
+                          {autoZoomLocked ? 'Locked' : 'Detected'}: {(detectedZoom * 100).toFixed(0)}%
                         </div>
                       )}
                     </button>
@@ -2095,13 +2846,13 @@ export function Player() {
               </button>
             )}
 
-            {/* Subtitle track selector */}
-            {selectedSource && selectedSource.MediaStreams.filter(s => s.Type === 'Subtitle' && s.IsTextSubtitleStream).length > 0 && (
+            {/* Subtitle selector (SubDL) */}
+            {((localStorage.getItem('subdl_apiKey') || '').length > 0 || customSubtitleUrl) && (
               <div className="relative" role="listitem">
                 <button
                   onClick={() => { setShowSubtitleMenu(!showSubtitleMenu); setShowAudioMenu(false); setShowFilterMenu(false); }}
                   className={`player-control px-4 py-2.5 bg-black/60 hover:bg-black/80 text-white text-sm rounded-full transition-all duration-200 backdrop-blur-md border hover:scale-105 active:scale-95 flex items-center gap-2 ${
-                    selectedSubtitleIndex !== null ? 'border-blue-500 bg-blue-500/20' : 'border-white/10 hover:border-white/20'
+                    customSubtitleUrl ? 'border-blue-500 bg-blue-500/20' : 'border-white/10 hover:border-white/20'
                   }`}
                   tabIndex={0}
                 >
@@ -2112,38 +2863,153 @@ export function Player() {
                 </button>
 
                 {showSubtitleMenu && (
-                  <div className="absolute bottom-full mb-2 right-0 bg-gray-900/95 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl min-w-[250px] max-h-[300px] overflow-y-auto" role="menu">
-                    {/* Off option */}
+                  <div className="absolute bottom-full mb-2 right-0 bg-gray-900/95 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl min-w-[300px] max-h-[360px] overflow-y-auto" role="menu">
+                    <div className="px-4 pt-4 pb-2 border-b border-white/5">
+                      <div className="text-xs text-gray-400">SubDL Subtitles</div>
+                      {customSubtitleLabel ? (
+                        <div className="text-sm text-blue-300 mt-1">Active: {customSubtitleLabel}</div>
+                      ) : (
+                        <div className="text-sm text-gray-300 mt-1">No subtitle selected</div>
+                      )}
+                    </div>
+
                     <button
-                      onClick={() => { setSelectedSubtitleIndex(null); setShowSubtitleMenu(false); }}
-                      className={`player-menu-item w-full px-4 py-3 text-left transition-all duration-150 border-b border-white/5 ${
-                        selectedSubtitleIndex === null ? 'bg-blue-500/20 text-blue-400' : 'text-white hover:bg-white/10'
-                      }`}
+                      onClick={() => {
+                        if (subtitleBlobUrlRef.current) {
+                          URL.revokeObjectURL(subtitleBlobUrlRef.current);
+                          subtitleBlobUrlRef.current = '';
+                        }
+                        setCustomSubtitleUrl('');
+                        setCustomSubtitleLabel('');
+                        setShowSubtitleMenu(false);
+                      }}
+                      className="player-menu-item w-full px-4 py-3 text-left transition-all duration-150 border-b border-white/5 text-white hover:bg-white/10"
                       role="menuitem"
                     >
                       <div className="font-medium">Off</div>
                     </button>
-                    {selectedSource.MediaStreams
-                      .filter(s => s.Type === 'Subtitle' && s.IsTextSubtitleStream)
-                      .map((stream) => (
+
+                    <div className="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+                      <button
+                        onClick={searchSubdlSubtitles}
+                        className="px-3 py-2 rounded-lg bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 text-sm font-medium transition-all"
+                      >
+                        {isSubdlSearching ? 'Searching...' : 'Search Subtitles'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSubdlResults([]);
+                          setSubdlError('');
+                          lastSubdlSearchKeyRef.current = '';
+                          searchSubdlSubtitles();
+                        }}
+                        className="px-3 py-2 rounded-lg bg-white/10 text-white hover:bg-white/20 text-sm transition-all"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+
+                    <div className="px-4 pb-3 border-b border-white/5">
+                      <label className="block text-xs text-gray-400 mb-2">Custom Search</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={subdlManualQuery}
+                          onChange={(e) => setSubdlManualQuery(e.target.value)}
+                          placeholder="Search by title..."
+                          className="flex-1 px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                        />
                         <button
-                          key={stream.Index}
-                          onClick={() => { setSelectedSubtitleIndex(stream.Index); setShowSubtitleMenu(false); }}
-                          className={`player-menu-item w-full px-4 py-3 text-left transition-all duration-150 border-b border-white/5 last:border-b-0 ${
-                            selectedSubtitleIndex === stream.Index ? 'bg-blue-500/20 text-blue-400' : 'text-white hover:bg-white/10'
-                          }`}
+                          onClick={() => {
+                            setSubdlResults([]);
+                            setSubdlError('');
+                            lastSubdlSearchKeyRef.current = '';
+                            searchSubdlSubtitles();
+                          }}
+                          className="px-3 py-2 rounded-lg bg-white/10 text-white hover:bg-white/20 text-sm transition-all"
+                        >
+                          Go
+                        </button>
+                      </div>
+                    </div>
+
+                    {subdlTitles.length > 0 && (
+                      <div className="px-4 pb-3 border-b border-white/5">
+                        <label className="block text-xs text-gray-400 mb-2">Matched Titles</label>
+                        <select
+                          value={subdlSelectedTitleId}
+                          onChange={(e) => setSubdlSelectedTitleId(e.target.value)}
+                          className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500"
+                        >
+                          {subdlTitles.map((title) => {
+                            const label = `${title?.name || title?.title || 'Unknown'}${title?.year ? ` (${title.year})` : ''}`;
+                            const value = String(title?.sd_id ?? '');
+                            return (
+                              <option key={value} value={value}>
+                                {label}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        <button
+                          onClick={() => {
+                            setSubdlResults([]);
+                            setSubdlError('');
+                            lastSubdlSearchKeyRef.current = '';
+                            searchSubdlSubtitles();
+                          }}
+                          className="mt-2 px-3 py-2 rounded-lg bg-white/10 text-white hover:bg-white/20 text-sm transition-all"
+                        >
+                          Search Selected Title
+                        </button>
+                      </div>
+                    )}
+
+                    {subdlError && (
+                      <div className="px-4 py-3 text-sm text-red-300 border-b border-white/5">{subdlError}</div>
+                    )}
+
+                    {subdlResults.length === 0 && !subdlError && !isSubdlSearching && (
+                      <div className="px-4 py-3 text-sm text-gray-400 border-b border-white/5">
+                        No results yet. Tap “Search Subtitles”.
+                      </div>
+                    )}
+
+                    {subdlResults.map((subtitle, idx) => {
+                      const label =
+                        subtitle?.release_name ||
+                        subtitle?.release ||
+                        subtitle?.name ||
+                        subtitle?.file_name ||
+                        `Subtitle ${idx + 1}`;
+                      const language = subtitle?.language || subtitle?.lang || '';
+                      const hearing = subtitle?.hi ? 'HI' : '';
+                      const fullSeason =
+                        subtitle?.full_season ||
+                        (subtitle?.episode_from && subtitle?.episode_end) ||
+                        (typeof subtitle?.release_name === 'string' && /complete|full\s*season/i.test(subtitle.release_name));
+                      return (
+                        <button
+                          key={`${subtitle?.id || subtitle?.subtitle_id || idx}`}
+                          onClick={() => downloadAndApplySubdlSubtitle(subtitle)}
+                          className="player-menu-item w-full px-4 py-3 text-left transition-all duration-150 border-b border-white/5 last:border-b-0 text-white hover:bg-white/10"
                           role="menuitem"
                         >
                           <div className="font-medium">
-                            {stream.DisplayTitle || stream.Language?.toUpperCase() || `Subtitle ${stream.Index}`}
-                            {stream.IsDefault && ' (Default)'}
-                            {stream.IsForced && ' (Forced)'}
+                            {language ? `${language.toUpperCase()} • ` : ''}{label}
                           </div>
-                          <div className="text-xs text-gray-400 mt-1">
-                            {stream.Codec?.toUpperCase()}
-                          </div>
+                          {fullSeason && (
+                            <div className="text-xs text-blue-300 mt-1">Full season pack</div>
+                          )}
+                          {(subtitle?.comment || hearing) && (
+                            <div className="text-xs text-gray-400 mt-1">
+                              {hearing && `${hearing} `}
+                              {subtitle?.comment || ''}
+                            </div>
+                          )}
                         </button>
-                      ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

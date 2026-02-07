@@ -57,10 +57,20 @@ export function Settings() {
   const [preferredAudioLang, setPreferredAudioLang] = useState<string>(() => {
     return localStorage.getItem('emby_preferredAudioLang') || '';
   });
+  const [videoPlayer, setVideoPlayer] = useState<string>(() => {
+    return localStorage.getItem('emby_videoPlayer') || 'hlsjs';
+  });
   const [tmdbApiKey, setTmdbApiKey] = useState<string>(() => {
     return localStorage.getItem('tmdb_apiKey') || '';
   });
   const [showTmdbKey, setShowTmdbKey] = useState(false);
+  const [subdlApiKey, setSubdlApiKey] = useState<string>(() => {
+    return localStorage.getItem('subdl_apiKey') || '';
+  });
+  const [showSubdlKey, setShowSubdlKey] = useState(false);
+  const [subdlLanguages, setSubdlLanguages] = useState<string>(() => {
+    return localStorage.getItem('subdl_languages') || 'EN';
+  });
   const [availableGenres, setAvailableGenres] = useState<string[]>([]);
   const [availableYears, setAvailableYears] = useState<number[]>([]);
   const [homeSectionOrder, setHomeSectionOrder] = useState<string[]>(() => {
@@ -149,7 +159,7 @@ export function Settings() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [hasCheckedForUpdates, setHasCheckedForUpdates] = useState(false);
-  const [currentVersion] = useState('3.0.7');
+  const [currentVersion] = useState('3.0.9');
 
   const checkForUpdates = async () => {
     try {
@@ -567,6 +577,36 @@ export function Settings() {
                 <div className="border-t border-gray-800/70" />
 
                 <div className="p-6">
+                  <label className="block text-white font-semibold text-lg mb-2">Video Player</label>
+                  <p className="text-sm text-gray-400 mb-5">Choose which player engine to use for video playback</p>
+                  <div className="flex items-center justify-between p-5 bg-gray-800/50 rounded-xl border border-gray-700/50 hover:border-gray-600 transition-all">
+                    <div className="flex-1">
+                      <p className="text-white font-semibold">Use Shaka Player - Not Recommended</p>
+                      <p className="text-sm text-gray-400 mt-1">EXPERIMENTAL, you will encounter playback errors</p>
+                      <p className="text-xs text-gray-500 mt-1">Requires closing and reopening Aether to take effect</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const newValue = videoPlayer === 'shaka' ? 'hlsjs' : 'shaka';
+                        setVideoPlayer(newValue);
+                        localStorage.setItem('emby_videoPlayer', newValue);
+                      }}
+                      role="switch"
+                      aria-checked={videoPlayer === 'shaka'}
+                      className={`relative w-16 h-9 rounded-full transition-all duration-300 flex-shrink-0 hover:scale-105 ml-6 ${
+                        videoPlayer === 'shaka' ? 'bg-purple-600' : 'bg-gray-700'
+                      }`}
+                    >
+                      <div className={`absolute top-1.5 w-6 h-6 bg-white rounded-full shadow-lg transition-transform duration-300 ${
+                        videoPlayer === 'shaka' ? 'translate-x-8' : 'translate-x-1.5'
+                      }`} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="border-t border-gray-800/70" />
+
+                <div className="p-6">
                   <label className="block text-white font-semibold text-lg mb-2">Default Audio Language</label>
                   <p className="text-sm text-gray-400 mb-5">Automatically select this language when available</p>
                   <select
@@ -599,6 +639,95 @@ export function Settings() {
                     <option value="tha">Thai</option>
                     <option value="vie">Vietnamese</option>
                   </select>
+                </div>
+
+                <div className="border-t border-gray-800/70" />
+
+                <div className="p-6">
+                  <label className="block text-white font-semibold text-lg mb-2">SubDL API Key</label>
+                  <p className="text-sm text-gray-400 mb-5">
+                    Used to search and download subtitles directly from SubDL.
+                  </p>
+                  <details className="mb-4 rounded-xl border border-gray-800/70 bg-gray-900/40">
+                    <summary className="cursor-pointer select-none px-4 py-3 text-sm text-blue-300 hover:text-blue-200">
+                      How to get a SubDL API key
+                    </summary>
+                    <div className="px-4 pb-4 text-sm text-gray-300 space-y-2">
+                      <div>1. Sign up at `https://subdl.com/panel/register`</div>
+                      <div>2. Open the API page at `https://subdl.com/panel/api`</div>
+                      <div>3. Copy your API key and paste it below</div>
+                    </div>
+                  </details>
+                  <div className="flex gap-3">
+                    <div className="relative flex-1">
+                      <input
+                        type={showSubdlKey ? 'text' : 'password'}
+                        value={subdlApiKey}
+                        onChange={(e) => {
+                          setSubdlApiKey(e.target.value);
+                          localStorage.setItem('subdl_apiKey', e.target.value);
+                        }}
+                        placeholder="Paste your SubDL API key here"
+                        className="w-full px-4 py-3 pr-12 bg-gray-800/70 border border-gray-700 rounded-xl text-white placeholder-gray-500 hover:bg-gray-800 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 font-mono text-sm transition-all"
+                      />
+                      <button
+                        onClick={() => setShowSubdlKey(!showSubdlKey)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-all duration-200 hover:scale-110 p-1 rounded"
+                        aria-label={showSubdlKey ? 'Hide API key' : 'Show API key'}
+                      >
+                        {showSubdlKey ? (
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                          </svg>
+                        ) : (
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                    {subdlApiKey && (
+                      <button
+                        onClick={() => {
+                          setSubdlApiKey('');
+                          localStorage.removeItem('subdl_apiKey');
+                        }}
+                        className="px-5 py-3 bg-red-600/20 hover:bg-red-600/30 text-red-400 font-medium rounded-xl transition-all duration-200 hover:scale-105 flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        Clear
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="mt-5">
+                    <label className="block text-sm font-medium text-gray-300 mb-2">Preferred Subtitle Languages</label>
+                    <input
+                      type="text"
+                      value={subdlLanguages}
+                      onChange={(e) => {
+                        setSubdlLanguages(e.target.value);
+                        localStorage.setItem('subdl_languages', e.target.value);
+                      }}
+                      placeholder="e.g. EN,ES"
+                      className="w-full max-w-sm px-4 py-3 bg-gray-800/70 border border-gray-700 rounded-xl text-white placeholder-gray-500 hover:bg-gray-800 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 font-mono text-sm transition-all"
+                    />
+                    <p className="text-xs text-gray-500 mt-2">Comma-separated language codes supported by SubDL.</p>
+                    <p className="text-xs text-gray-500 mt-2">
+                      EN = English, ES = Spanish, FR = French, DE = German, IT = Italian, PT = Portuguese,
+                      RU = Russian, JA = Japanese, KO = Korean, ZH = Chinese, AR = Arabic, HI = Hindi, TR = Turkish, NL = Dutch,
+                      PL = Polish, SV = Swedish, NO = Norwegian, DA = Danish, FI = Finnish, TH = Thai
+<br></br>
+<br></br>
+                     <b>For example you can enter "EN" for English or "EN,ES" for English and Spanish </b>
+                     <br></br>
+<br></br>
+                     <b>Do not use spaces. </b>
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>

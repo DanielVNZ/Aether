@@ -1,4 +1,4 @@
-# Auto-Generated Updater Manifest
+﻿# Auto-Generated Updater Manifest
 
 This script automatically generates the `latest.json` file needed for Tauri's auto-updater.
 
@@ -23,19 +23,29 @@ Generates the manifest from the last build (must run `npm run tauri build` first
    - Current version
    - Auto-generated release notes
    - Current timestamp
-   - Correct GitHub download URL
-3. Saves it to `src-tauri/target/release/bundle/nsis/latest.json`
+   - Correct GitHub download URL(s)
+3. Saves it to `src-tauri/target/release/bundle/latest.json`
 
 ## Output Location
 
-The generated file is placed alongside your installer:
+The generated file is placed in the bundle root:
 ```
-src-tauri/target/release/bundle/nsis/
-├── Aether_3.0.3_x64-setup.exe
+src-tauri/target/release/bundle/
+├── nsis/
+│   └── Aether_3.0.3_x64-setup.exe
+├── appimage/
+│   └── Aether_3.0.3_x86_64.AppImage
 └── latest.json  ← Auto-generated
 ```
 
-Both files should be uploaded to your GitHub release.
+Both the installer(s) and `latest.json` should be uploaded to your GitHub release.
+
+## Platforms Supported
+
+- Windows (NSIS `.exe` + `.sig`)
+- Linux (AppImage `.AppImage` + `.sig`)
+
+The script only includes platforms whose artifacts and `.sig` files are present in the bundle folders.
 
 ## Customization
 
