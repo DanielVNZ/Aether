@@ -31,7 +31,7 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["nsis", "appimage", "deb", "tar.gz"],
+    "targets": ["nsis", "appimage", "deb"],
     "publisher": "DanielVNZ",
     "copyright": "Copyright © 2026 DanielVNZ",
     "shortDescription": "Aether - Media streaming client",
