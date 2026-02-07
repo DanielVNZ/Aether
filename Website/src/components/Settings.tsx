@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { embyApi } from '../services/embyApi';
 import { useAuth } from '../hooks/useAuth';
-import { check } from '@tauri-apps/plugin-updater';
+import { check, type DownloadEvent } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 
 type SettingsSection = 'home' | 'recommendations' | 'playback' | 'account' | 'updates';
@@ -203,7 +203,7 @@ export function Settings() {
       console.log('Starting download from:', update);
       
       let bytesDownloaded = 0;
-      await update.downloadAndInstall((event) => {
+      await update.downloadAndInstall((event: DownloadEvent) => {
         console.log('Update event:', event);
         switch (event.event) {
           case 'Started':
@@ -212,7 +212,7 @@ export function Settings() {
             console.log('Download started');
             break;
           case 'Progress':
-            bytesDownloaded += event.data.chunkLength;
+            bytesDownloaded += event.data?.chunkLength ?? 0;
             const animatedProgress = Math.min(90, (bytesDownloaded / (1024 * 1024 * 50)) * 100);
             setDownloadProgress(animatedProgress);
             console.log(`Downloaded: ${(bytesDownloaded / 1024 / 1024).toFixed(2)} MB`);

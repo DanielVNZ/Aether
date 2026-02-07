@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { check } from '@tauri-apps/plugin-updater';
+import { check, type DownloadEvent } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 
 export function UpdateBanner() {
@@ -48,7 +48,7 @@ export function UpdateBanner() {
       console.log('Starting update download:', update);
       
       let bytesDownloaded = 0;
-      await update.downloadAndInstall((event) => {
+      await update.downloadAndInstall((event: DownloadEvent) => {
         console.log('Update event:', event);
         switch (event.event) {
           case 'Started':
@@ -57,7 +57,7 @@ export function UpdateBanner() {
             console.log('Update download started');
             break;
           case 'Progress':
-            bytesDownloaded += event.data.chunkLength;
+            bytesDownloaded += event.data?.chunkLength ?? 0;
             const animatedProgress = Math.min(90, (bytesDownloaded / (1024 * 1024 * 50)) * 100);
             setDownloadProgress(animatedProgress);
             console.log(`Downloaded: ${(bytesDownloaded / (1024 * 1024)).toFixed(1)} MB`);

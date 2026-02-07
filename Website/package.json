@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.18",
+    "@tauri-apps/plugin-process": "^2.0.0",
+    "@tauri-apps/plugin-updater": "^2.0.0",
     "@types/video.js": "^7.3.58",
     "autoprefixer": "^10.4.23",
     "fflate": "^0.8.2",
