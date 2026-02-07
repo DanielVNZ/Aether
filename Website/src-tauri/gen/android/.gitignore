@@ -22,4 +22,3 @@ key.properties
 node_modules
 
 # Tauri config (local overrides)
-tauri.conf.json

@@ -1,6 +1,5 @@
 /src/main/java/com/aether/app/generated
 /src/main/jniLibs/**/*.so
-/src/main/assets/tauri.conf.json
 /tauri.build.gradle.kts
 /proguard-tauri.pro
 /tauri.properties
@@ -9,4 +8,3 @@
 node_modules
 
 # Tauri config (local overrides)
-tauri.conf.json

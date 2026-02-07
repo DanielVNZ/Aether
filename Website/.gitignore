@@ -29,5 +29,3 @@ src-tauri/*.keystore
 src-tauri/gen/android/key.properties
 
 # Tauri config (local overrides)
-tauri.conf.json
-src-tauri/tauri.conf.json
