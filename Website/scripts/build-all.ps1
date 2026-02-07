@@ -36,6 +36,7 @@ try {
     Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
   }
 
+  npm install
   npm run tauri:build
 } finally {
   Pop-Location
@@ -52,6 +53,7 @@ set -e
 cd "__WSL_DIR__"
 export TAURI_SIGNING_PRIVATE_KEY="$(cat "__WSL_KEY__")"
 __WSL_PASSWORD__
+npm install
 npm run tauri:build
 '@
 $wslCommand = $wslCommand.Replace('__WSL_DIR__', $wslWebsiteDir).Replace('__WSL_KEY__', $wslKeyPath).Replace('__WSL_PASSWORD__', $wslPasswordExport)

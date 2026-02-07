@@ -4,6 +4,8 @@ import { authService } from './services/auth';
 import { embyApi } from './services/embyApi';
 import { AppFallbackSkeleton } from './components/AppFallbackSkeleton';
 import { UpdateBanner } from './components/UpdateBanner';
+import { ConsentBanner } from './components/ConsentBanner';
+import { initAnalytics, trackAppOpen } from './services/analytics';
 
 // Lazy load all route components for better initial load
 const Login = lazy(() => import('./components/Login').then(m => ({ default: m.Login })));
@@ -30,11 +32,13 @@ function App() {
     if (storedAuth) {
       embyApi.setCredentials(storedAuth);
     }
+    void initAnalytics().then(() => trackAppOpen());
   }, []);
 
   return (
     <BrowserRouter>
       <UpdateBanner />
+      <ConsentBanner />
       <Suspense fallback={<AppFallbackSkeleton />}>
         <Routes>
           <Route path="/login" element={<Login />} />

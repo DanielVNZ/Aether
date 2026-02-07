@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth';
 import { check, type DownloadEvent } from '@tauri-apps/plugin-updater';
 import { isTauri } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
+import { getConsent, setConsent, type ConsentValue } from '../services/analytics';
 
 type SettingsSection = 'home' | 'recommendations' | 'playback' | 'account' | 'updates';
 
@@ -160,7 +161,10 @@ export function Settings() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [hasCheckedForUpdates, setHasCheckedForUpdates] = useState(false);
-  const [currentVersion] = useState('3.0.9');
+  const [currentVersion] = useState('3.0.10');
+  const [analyticsConsent, setAnalyticsConsent] = useState<ConsentValue | 'unset'>(
+    () => getConsent() ?? 'unset'
+  );
 
   const safeCheckForUpdates = async () => {
     if (!isTauri()) {
@@ -777,6 +781,37 @@ export function Settings() {
                   <p className="text-white font-semibold text-lg mb-2">Current Version</p>
                   <p className="text-3xl font-bold text-blue-400 mb-1">{currentVersion}</p>
                   <p className="text-sm text-gray-400">Aether Media Player</p>
+                </div>
+              </div>
+
+              {/* Analytics Consent */}
+              <div className="bg-gray-900/50 rounded-xl border border-gray-800/70 overflow-hidden backdrop-blur-sm">
+                <div className="p-6 flex items-center justify-between">
+                  <div className="flex-1">
+                    <p className="text-white font-semibold text-lg">Analytics</p>
+                    <p className="text-sm text-gray-400 mt-1">
+                      Allow anonymous usage tracking for user count only.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const next = analyticsConsent === 'granted' ? 'denied' : 'granted';
+                      setAnalyticsConsent(next);
+                      void setConsent(next);
+                    }}
+                    role="switch"
+                    aria-checked={analyticsConsent === 'granted'}
+                    className={`relative w-16 h-9 rounded-full transition-all duration-300 flex-shrink-0 hover:scale-105 ml-6 ${
+                      analyticsConsent === 'granted' ? 'bg-blue-600' : 'bg-gray-700'
+                    }`}
+                  >
+                    <div className={`absolute top-1.5 w-6 h-6 bg-white rounded-full shadow-lg transition-transform duration-300 ${
+                      analyticsConsent === 'granted' ? 'translate-x-8' : 'translate-x-1.5'
+                    }`} />
+                  </button>
+                </div>
+                <div className="px-6 pb-5 text-xs text-gray-500">
+                  You can change this anytime. Disabling stops future tracking immediately.
                 </div>
               </div>
 
