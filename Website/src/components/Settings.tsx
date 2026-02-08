@@ -161,7 +161,7 @@ export function Settings() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [hasCheckedForUpdates, setHasCheckedForUpdates] = useState(false);
-  const [currentVersion] = useState('3.0.11');
+  const [currentVersion] = useState('3.0.12');
   const [analyticsConsent, setAnalyticsConsent] = useState<ConsentValue | 'unset'>(
     () => getConsent() ?? 'unset'
   );
@@ -613,28 +613,46 @@ export function Settings() {
                 <div className="p-6">
                   <label className="block text-white font-semibold text-lg mb-2">Video Player</label>
                   <p className="text-sm text-gray-400 mb-5">Choose which player engine to use for video playback</p>
-                  <div className="flex items-center justify-between p-5 bg-gray-800/50 rounded-xl border border-gray-700/50 hover:border-gray-600 transition-all">
-                    <div className="flex-1">
-                      <p className="text-white font-semibold">Use Shaka Player - Not Recommended</p>
-                      <p className="text-sm text-gray-400 mt-1">EXPERIMENTAL, you will encounter playback errors</p>
-                      <p className="text-xs text-gray-500 mt-1">Requires closing and reopening Aether to take effect</p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        const newValue = videoPlayer === 'shaka' ? 'hlsjs' : 'shaka';
-                        setVideoPlayer(newValue);
-                        localStorage.setItem('emby_videoPlayer', newValue);
-                      }}
-                      role="switch"
-                      aria-checked={videoPlayer === 'shaka'}
-                      className={`relative w-16 h-9 rounded-full transition-all duration-300 flex-shrink-0 hover:scale-105 ml-6 ${
-                        videoPlayer === 'shaka' ? 'bg-purple-600' : 'bg-gray-700'
-                      }`}
-                    >
-                      <div className={`absolute top-1.5 w-6 h-6 bg-white rounded-full shadow-lg transition-transform duration-300 ${
-                        videoPlayer === 'shaka' ? 'translate-x-8' : 'translate-x-1.5'
-                      }`} />
-                    </button>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    {[
+                      {
+                        value: 'hlsjs',
+                        title: 'HLS.js (Default) Windows Only',
+                        desc: 'Best overall compatibility. Recommended. Not supported on Linux builds.',
+                        note: 'Stable',
+                      },
+                      {
+                        value: 'libmpv',
+                        title: 'LibMPV (Windows or Linux)',
+                        desc: 'Native playback for Linux builds (requires libmpv support).',
+                        note: 'Experimental - will superceed hls.js when stable',
+                      },
+                    ].map((option) => (
+                      <button
+                        key={option.value}
+                        onClick={() => {
+                          setVideoPlayer(option.value);
+                          localStorage.setItem('emby_videoPlayer', option.value);
+                        }}
+                        className={`p-5 rounded-xl text-left transition-all duration-200 hover:scale-[1.02] border ${
+                          videoPlayer === option.value
+                            ? 'bg-purple-600/20 border-purple-400 text-white shadow-lg shadow-purple-600/20'
+                            : 'bg-gray-800/60 border-gray-700/50 text-gray-200 hover:bg-gray-800'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold text-lg">{option.title}</p>
+                          {videoPlayer === option.value && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-purple-500/30 text-purple-200">
+                              Selected
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-400 mt-2">{option.desc}</p>
+                        <p className="text-xs text-gray-500 mt-2">{option.note}</p>
+                        <p className="text-xs text-gray-500 mt-3">Requires closing and reopening Aether to take effect</p>
+                      </button>
+                    ))}
                   </div>
                 </div>
 

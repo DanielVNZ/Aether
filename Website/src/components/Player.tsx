@@ -6,6 +6,8 @@ import shaka from 'shaka-player/dist/shaka-player.ui.js';
 import { embyApi } from '../services/embyApi';
 import { MediaSelector } from './MediaSelector';
 import { usePlayerUi } from '../context/PlayerUiContext';
+import { isTauri } from '@tauri-apps/api/core';
+import type { MpvObservableProperty } from 'tauri-plugin-libmpv-api';
 // Inline skeleton replaces full-screen loading
 import type { MediaSource, EmbyItem } from '../types/emby.types';
 
@@ -23,7 +25,10 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
   const shakaRef = useRef<shaka.Player | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const useShaka = localStorage.getItem('emby_videoPlayer') === 'shaka';
+  const isInTauri = isTauri();
+  const selectedPlayer = localStorage.getItem('emby_videoPlayer') || 'hlsjs';
+  const useShaka = selectedPlayer === 'shaka';
+  const useLibmpv = isInTauri && selectedPlayer === 'libmpv';
 
   const [item, setItem] = useState<EmbyItem | null>(null);
   const [mediaSources, setMediaSources] = useState<MediaSource[]>([]);
@@ -99,6 +104,9 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
     hlsLatency: 0,
     bandwidth: 0,
   });
+  const [mpvCacheDuration, setMpvCacheDuration] = useState<number>(0);
+  const [mpvCacheSpeed, setMpvCacheSpeed] = useState<number>(0);
+  const [mpvBufferedPercent, setMpvBufferedPercent] = useState<number>(0);
   const statsIntervalRef = useRef<number | null>(null);
   const hideTimeoutRef = useRef<number | null>(null);
   const progressIntervalRef = useRef<number | null>(null);
@@ -116,6 +124,15 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
   const autoZoomSampleStartRef = useRef<number | null>(null);
   const autoZoomSamplesRef = useRef<{ zoom: number; offset: number }[]>([]);
   const autoZoomCandidateRef = useRef<{ zoom: number; offset: number } | null>(null);
+  const mpvApiRef = useRef<null | typeof import('tauri-plugin-libmpv-api')>(null);
+  const mpvInitializedRef = useRef(false);
+  const mpvObservingRef = useRef(false);
+  const mpvActiveRef = useRef(false);
+  const mpvLastPauseRef = useRef<boolean | null>(null);
+  const mpvUnlistenRef = useRef<null | (() => void)>(null);
+  const mpvPendingSeekRef = useRef<number | null>(null);
+  const currentTimeRef = useRef<number>(0);
+  const isPlayingRef = useRef<boolean>(false);
   // Keyboard hold-to-seek for seek bar
   const seekHoldIntervalRef = useRef<number | null>(null);
   const seekHoldDirRef = useRef<'left' | 'right' | null>(null);
@@ -124,8 +141,24 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
   const playButtonFocusRef = useRef<HTMLButtonElement>(null);
   const lastSubdlSearchKeyRef = useRef<string>('');
   const subtitleBlobUrlRef = useRef<string>('');
+  const selectedSourceRef = useRef<MediaSource | null>(null);
+  const playSessionIdRef = useRef<string>('');
+  const nextEpisodeRef = useRef<EmbyItem | null>(null);
+  const resolvedIdRef = useRef<string | undefined>(resolvedId);
+
+  const MPV_OBSERVED_PROPERTIES = [
+    ['pause', 'flag'],
+    ['time-pos', 'double', 'none'],
+    ['duration', 'double', 'none'],
+    ['volume', 'double', 'none'],
+    ['mute', 'flag'],
+    ['eof-reached', 'flag'],
+    ['demuxer-cache-duration', 'double', 'none'],
+    ['cache-speed', 'int64', 'none'],
+  ] as const satisfies MpvObservableProperty[];
 
   const isAndroidTV = /Android/i.test(navigator.userAgent);
+  const isLinuxDesktop = /Linux/i.test(navigator.userAgent) && !/Android/i.test(navigator.userAgent);
 
   // Install Shaka Player polyfills
   useEffect(() => {
@@ -133,6 +166,63 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
       shaka.polyfill.installAll();
     }
   }, []);
+
+  useEffect(() => {
+    selectedSourceRef.current = selectedSource;
+  }, [selectedSource]);
+
+  useEffect(() => {
+    playSessionIdRef.current = playSessionId;
+  }, [playSessionId]);
+
+  useEffect(() => {
+    nextEpisodeRef.current = nextEpisode;
+  }, [nextEpisode]);
+
+  useEffect(() => {
+    resolvedIdRef.current = resolvedId;
+  }, [resolvedId]);
+
+  useEffect(() => {
+    currentTimeRef.current = currentTime;
+  }, [currentTime]);
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (!useLibmpv) return;
+    const html = document.documentElement;
+    const body = document.body;
+    html.classList.add('mpv-transparent');
+    body.classList.add('mpv-transparent');
+    return () => {
+      html.classList.remove('mpv-transparent');
+      body.classList.remove('mpv-transparent');
+    };
+  }, [useLibmpv]);
+
+  useEffect(() => {
+    const body = document.body;
+    if (useLibmpv && !isCollapsedView) {
+      body.classList.add('libmpv-fullscreen');
+      return () => body.classList.remove('libmpv-fullscreen');
+    }
+    body.classList.remove('libmpv-fullscreen');
+  }, [isCollapsedView, useLibmpv]);
+
+  useEffect(() => {
+    if (!useLibmpv) return;
+    if (duration <= 0) {
+      setMpvBufferedPercent(0);
+      return;
+    }
+    const bufferedEnd = Math.min(currentTime + mpvCacheDuration, duration);
+    const percent = Math.max(0, Math.min(100, (bufferedEnd / duration) * 100));
+    setMpvBufferedPercent(percent);
+  }, [currentTime, duration, mpvCacheDuration, useLibmpv]);
+
 
   useEffect(() => {
     if (resolvedId) {
@@ -174,8 +264,9 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
     
     return () => {
       // Report playback stopped when component unmounts
-      if (selectedSource && videoRef.current) {
-        const positionTicks = Math.floor(videoRef.current.currentTime * 10000000);
+      if (selectedSource) {
+        const seconds = useLibmpv ? currentTimeRef.current : (videoRef.current?.currentTime ?? 0);
+        const positionTicks = Math.floor(seconds * 10000000);
         embyApi.reportPlaybackStopped({
           ItemId: resolvedId!,
           MediaSourceId: selectedSource.Id,
@@ -206,12 +297,46 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
         URL.revokeObjectURL(subtitleBlobUrlRef.current);
         subtitleBlobUrlRef.current = '';
       }
+      if (mpvActiveRef.current && mpvApiRef.current) {
+        mpvApiRef.current.destroy().catch(err => console.warn('Failed to destroy LibMPV instance:', err));
+        if (mpvUnlistenRef.current) {
+          mpvUnlistenRef.current();
+          mpvUnlistenRef.current = null;
+        }
+        mpvActiveRef.current = false;
+        mpvInitializedRef.current = false;
+        mpvObservingRef.current = false;
+        mpvLastPauseRef.current = null;
+      }
     };
-  }, [resolvedId]);
+  }, [resolvedId, useLibmpv]);
 
   // Effect to collect stats for nerds
   useEffect(() => {
     if (showStats) {
+      if (useLibmpv) {
+        const videoTrack = selectedSource?.MediaStreams?.find(s => s.Type === 'Video');
+        const audioTrack = selectedSource?.MediaStreams?.find(s => s.Type === 'Audio');
+        const height = videoTrack?.Height || 0;
+        const width = videoTrack?.Width || 0;
+
+        setStats({
+          videoResolution: height && width ? `${width}x${height}` : 'Unknown',
+          currentBitrate: selectedSource?.Bitrate || 0,
+          bufferHealth: Math.round(mpvCacheDuration * 10) / 10,
+          droppedFrames: 0,
+          totalFrames: 0,
+          downloadSpeed: mpvCacheSpeed || 0,
+          latency: 0,
+          codec: videoTrack?.Codec?.toUpperCase() || 'Unknown',
+          audioCodec: audioTrack?.Codec?.toUpperCase() || 'Unknown',
+          container: selectedSource?.Container?.toUpperCase() || 'Unknown',
+          hlsLatency: 0,
+          bandwidth: mpvCacheSpeed || 0,
+        });
+        return;
+      }
+
       const collectStats = () => {
         const video = videoRef.current;
         const hls = hlsRef.current;
@@ -278,7 +403,7 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
         }
       };
     }
-  }, [showStats, selectedSource]);
+  }, [showStats, selectedSource, useLibmpv, mpvCacheDuration, mpvCacheSpeed]);
 
   // Effect to show "Up Next" popup when within 2 minutes of end
   useEffect(() => {
@@ -476,7 +601,7 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
 
   // Effect for automatic black bar detection
   useEffect(() => {
-    if (!autoZoomEnabled || !videoRef.current || !streamUrl || isCollapsedView) {
+    if (!autoZoomEnabled || !videoRef.current || !streamUrl || isCollapsedView || useLibmpv) {
       // Clean up interval if auto mode is disabled
       if (autoZoomIntervalRef.current) {
         clearInterval(autoZoomIntervalRef.current);
@@ -688,7 +813,7 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
         autoZoomIntervalRef.current = null;
       }
     };
-  }, [autoZoomEnabled, isCollapsedView, streamUrl]);
+  }, [autoZoomEnabled, isCollapsedView, streamUrl, useLibmpv]);
 
   const handleMouseMove = () => {
     // On Android TV, some devices generate synthetic mousemove events
@@ -1232,6 +1357,177 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
     }
   };
 
+  const loadVideoWithLibmpv = async (url: string, startPosition: number = 0) => {
+    if (!useLibmpv) return;
+    setIsVideoLoading(true);
+    setError('');
+
+    const loadToken = ++loadTokenRef.current;
+    const isStale = () => loadToken !== loadTokenRef.current;
+
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+    if (shakaRef.current) {
+      await shakaRef.current.destroy();
+      shakaRef.current = null;
+    }
+
+    if (isStale()) return;
+
+    try {
+      if (!mpvApiRef.current) {
+        const api = await import('tauri-plugin-libmpv-api');
+        mpvApiRef.current = api;
+      }
+
+      const mpvApi = mpvApiRef.current;
+      if (!mpvApi) return;
+
+      if (!mpvInitializedRef.current) {
+        const isWindows = /Windows/i.test(navigator.userAgent);
+        await mpvApi.init({
+          initialOptions: {
+            'vo': 'gpu-next',
+            ...(isWindows ? { 'gpu-context': 'd3d11' } : {}),
+            'hwdec': 'auto',
+            'hwdec-codecs': 'all',
+            'vd-lavc-dr': 'yes',
+            'cache': 'yes',
+            'cache-secs': '1800',
+            'cache-on-disk': 'no',
+            'demuxer-max-bytes': '500M',
+            'demuxer-max-back-bytes': '500M',
+            'network-timeout': '30',
+            'keep-open': 'yes',
+            'force-window': 'yes',
+          },
+          observedProperties: MPV_OBSERVED_PROPERTIES,
+        });
+        mpvInitializedRef.current = true;
+      }
+
+      if (!mpvObservingRef.current) {
+        if (mpvUnlistenRef.current) {
+          mpvUnlistenRef.current();
+          mpvUnlistenRef.current = null;
+        }
+        mpvUnlistenRef.current = await mpvApi.observeProperties(
+          MPV_OBSERVED_PROPERTIES,
+          (event) => {
+            const { name, data } = event;
+            const timePos = name === 'time-pos' && typeof data === 'number' ? data : undefined;
+            const durationValue = name === 'duration' && typeof data === 'number' ? data : undefined;
+            const pauseValue = name === 'pause' && typeof data === 'boolean' ? data : undefined;
+            const volumeValue = name === 'volume' && typeof data === 'number' ? data : undefined;
+            const muteValue = name === 'mute' && typeof data === 'boolean' ? data : undefined;
+            const eofReached = name === 'eof-reached' && typeof data === 'boolean' ? data : false;
+            const cacheDuration = name === 'demuxer-cache-duration' && typeof data === 'number' ? data : undefined;
+            const cacheSpeed = name === 'cache-speed' && typeof data === 'number' ? data : undefined;
+
+            if (typeof timePos === 'number') {
+              setCurrentTime(timePos);
+              if (timePos > 0) {
+                setIsVideoLoading(false);
+              }
+              if (mpvPendingSeekRef.current !== null) {
+                const seekTarget = mpvPendingSeekRef.current;
+                mpvPendingSeekRef.current = null;
+                mpvApiRef.current?.command('seek', [seekTarget, 'absolute', 'exact']).catch(() => {});
+              }
+            }
+            if (typeof durationValue === 'number' && !Number.isNaN(durationValue)) {
+              setDuration(durationValue);
+              if (durationValue > 0) {
+                setIsVideoLoading(false);
+              }
+              if (mpvPendingSeekRef.current !== null) {
+                const seekTarget = mpvPendingSeekRef.current;
+                mpvPendingSeekRef.current = null;
+                mpvApiRef.current?.command('seek', [seekTarget, 'absolute', 'exact']).catch(() => {});
+              }
+            }
+            if (typeof pauseValue === 'boolean') {
+              setIsPlaying(!pauseValue);
+              const source = selectedSourceRef.current;
+              const sessionId = playSessionIdRef.current;
+              const itemId = resolvedIdRef.current;
+              if (mpvLastPauseRef.current !== pauseValue && source && sessionId && itemId) {
+                const positionTicks = Math.floor((timePos ?? currentTimeRef.current) * 10000000);
+                embyApi.reportPlaybackProgress({
+                  ItemId: itemId,
+                  MediaSourceId: source.Id,
+                  PlaySessionId: sessionId,
+                  PositionTicks: positionTicks,
+                  IsPaused: pauseValue,
+                  EventName: pauseValue ? 'Pause' : 'Unpause',
+                  PlayMethod: 'DirectPlay',
+                }).catch(err => console.error('Failed to report pause state:', err));
+                mpvLastPauseRef.current = pauseValue;
+              }
+            }
+            if (typeof volumeValue === 'number') {
+              setVolume(Math.max(0, Math.min(1, volumeValue / 100)));
+            }
+            if (typeof muteValue === 'boolean') {
+              setIsMuted(muteValue);
+            }
+            if (typeof cacheDuration === 'number') {
+              setMpvCacheDuration(cacheDuration);
+            }
+            if (typeof cacheSpeed === 'number') {
+              setMpvCacheSpeed(cacheSpeed);
+            }
+            if (eofReached) {
+              const source = selectedSourceRef.current;
+              const sessionId = playSessionIdRef.current;
+              const itemId = resolvedIdRef.current;
+              if (source && sessionId && itemId) {
+                const positionTicks = Math.floor((durationValue ?? currentTimeRef.current) * 10000000);
+                embyApi.reportPlaybackStopped({
+                  ItemId: itemId,
+                  MediaSourceId: source.Id,
+                  PlaySessionId: sessionId,
+                  PositionTicks: positionTicks,
+                }).catch(err => console.error('Failed to report playback ended:', err));
+              }
+
+              const next = nextEpisodeRef.current;
+              if (next) {
+                navigate(`/player/${next.Id}`, { replace: true, state: { backgroundLocation: backgroundLocation ?? location } });
+              }
+            }
+          }
+        );
+        mpvObservingRef.current = true;
+      }
+
+      if (isStale()) return;
+      mpvActiveRef.current = true;
+      await mpvApi.command('loadfile', [url, 'replace']);
+      await mpvApi.setProperty('pause', false);
+      if (startPosition > 0) {
+        mpvPendingSeekRef.current = startPosition;
+      }
+    } catch (err) {
+      console.error('Failed to load video with LibMPV:', err);
+      const errorMessage = String(err || '');
+      if (isLinuxDesktop && /libmpv|not found|failed to load|LoadLibrary/i.test(errorMessage)) {
+        setError(
+          'LibMPV is not installed. Install it and restart Aether. ' +
+          'Debian/Ubuntu: sudo apt update && sudo apt install libmpv2. ' +
+          'Arch: sudo pacman -S mpv. ' +
+          'Fedora: sudo dnf install mpv-libs. ' +
+          'openSUSE: sudo zypper install libmpv-2.'
+        );
+      } else {
+        setError('Failed to load video with LibMPV');
+      }
+      setIsVideoLoading(false);
+    }
+  };
+
   const loadVideo = async (url: string, startPosition: number = 0) => {
     if (!videoRef.current) return;
 
@@ -1239,6 +1535,22 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
 
     const loadToken = ++loadTokenRef.current;
     const isStale = () => loadToken !== loadTokenRef.current;
+
+    if (mpvActiveRef.current && mpvApiRef.current) {
+      try {
+        await mpvApiRef.current.destroy();
+      } catch (err) {
+        console.warn('Failed to destroy LibMPV instance:', err);
+      }
+      if (mpvUnlistenRef.current) {
+        mpvUnlistenRef.current();
+        mpvUnlistenRef.current = null;
+      }
+      mpvActiveRef.current = false;
+      mpvInitializedRef.current = false;
+      mpvObservingRef.current = false;
+      mpvLastPauseRef.current = null;
+    }
 
     // Destroy existing player instances - await to ensure clean state
     if (hlsRef.current) {
@@ -1333,8 +1645,16 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
             }
             return;
           }
+          const videoElement = videoRef.current;
+          if (!videoElement) {
+            await player.destroy();
+            if (shakaRef.current === player) {
+              shakaRef.current = null;
+            }
+            return;
+          }
           // Attach to video element first
-          await player.attach(videoRef.current);
+          await player.attach(videoElement);
         if (isStale()) {
           if (shakaRef.current === player) {
             await player.destroy();
@@ -1490,7 +1810,15 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
       }
       
       hls.loadSource(url);
-      hls.attachMedia(videoRef.current);
+      const videoElement = videoRef.current;
+      if (!videoElement) {
+        hls.destroy();
+        if (hlsRef.current === hls) {
+          hlsRef.current = null;
+        }
+        return;
+      }
+      hls.attachMedia(videoElement);
       
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         console.log('HLS manifest parsed, starting playback');
@@ -1589,6 +1917,25 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
         clearInterval(progressIntervalRef.current);
       }
       progressIntervalRef.current = window.setInterval(() => {
+        if (useLibmpv) {
+          if (!isPlayingRef.current) return;
+          const positionTicks = Math.floor(currentTimeRef.current * 10000000);
+          if (Math.abs(positionTicks - lastReportedTimeRef.current) > 10000000) {
+            lastReportedTimeRef.current = positionTicks;
+            embyApi.reportPlaybackProgress({
+              ItemId: resolvedId!,
+              MediaSourceId: source.Id,
+              PlaySessionId: sessionId,
+              PositionTicks: positionTicks,
+              AudioStreamIndex: selectedAudioIndex,
+              IsPaused: false,
+              EventName: 'TimeUpdate',
+              PlayMethod: 'DirectPlay',
+            }).catch(err => console.error('Failed to report progress:', err));
+          }
+          return;
+        }
+
         if (videoRef.current && !videoRef.current.paused) {
           const positionTicks = Math.floor(videoRef.current.currentTime * 10000000);
           // Only report if position has changed significantly (at least 1 second)
@@ -1614,15 +1961,19 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
       }
       loadTimeoutRef.current = window.setTimeout(() => {
         loadTimeoutRef.current = null;
-        loadVideo(url, startPosition);
+        if (useLibmpv) {
+          loadVideoWithLibmpv(url, startPosition);
+        } else {
+          loadVideo(url, startPosition);
+        }
       }, 100);
     }
   };
 
   const handleAudioTrackChange = async (audioIndex: number) => {
-    if (!selectedSource || !videoRef.current) return;
+    if (!selectedSource) return;
     
-    const currentTime = videoRef.current.currentTime;
+    const currentTime = useLibmpv ? currentTimeRef.current : (videoRef.current?.currentTime ?? 0);
     setSelectedAudioIndex(audioIndex);
     setShowAudioMenu(false);
     
@@ -1648,6 +1999,21 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
       await shakaRef.current.destroy();
       shakaRef.current = null;
     }
+    if (mpvActiveRef.current && mpvApiRef.current) {
+      try {
+        await mpvApiRef.current.destroy();
+      } catch (err) {
+        console.warn('Failed to destroy LibMPV instance:', err);
+      }
+      if (mpvUnlistenRef.current) {
+        mpvUnlistenRef.current();
+        mpvUnlistenRef.current = null;
+      }
+      mpvActiveRef.current = false;
+      mpvInitializedRef.current = false;
+      mpvObservingRef.current = false;
+      mpvLastPauseRef.current = null;
+    }
     
     // Get a new playback session
     try {
@@ -1669,14 +2035,27 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
         PlayMethod: 'DirectPlay',
       });
       
+      if (useLibmpv) {
+        await loadVideoWithLibmpv(url, currentTime);
+        return;
+      }
+
       // Use Shaka Player if enabled
         if (useShaka && shaka.Player.isBrowserSupported()) {
           const player = new shaka.Player();
           shakaRef.current = player;
           
           try {
+            const videoElement = videoRef.current;
+            if (!videoElement) {
+              await player.destroy();
+              if (shakaRef.current === player) {
+                shakaRef.current = null;
+              }
+              return;
+            }
             // Attach to video element first
-            await player.attach(videoRef.current);
+            await player.attach(videoElement);
           
           player.configure({
             streaming: {
@@ -1809,7 +2188,12 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
         });
         
         hls.loadSource(url);
-        hls.attachMedia(videoRef.current);
+        const videoElement = videoRef.current;
+        if (!videoElement) {
+          hls.destroy();
+          return;
+        }
+        hls.attachMedia(videoElement);
         
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (videoRef.current) {
@@ -1834,8 +2218,9 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
 
   const handleBack = async () => {
     // Report playback stopped before navigating away
-    if (selectedSource && videoRef.current) {
-      const positionTicks = Math.floor(videoRef.current.currentTime * 10000000);
+    if (selectedSource) {
+      const seconds = useLibmpv ? currentTimeRef.current : (videoRef.current?.currentTime ?? 0);
+      const positionTicks = Math.floor(seconds * 10000000);
       try {
         await embyApi.reportPlaybackStopped({
           ItemId: resolvedId!,
@@ -1846,6 +2231,21 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
       } catch (err) {
         console.error('Failed to report playback stopped:', err);
       }
+    }
+    if (mpvActiveRef.current && mpvApiRef.current) {
+      try {
+        await mpvApiRef.current.destroy();
+      } catch (err) {
+        console.warn('Failed to destroy LibMPV instance:', err);
+      }
+      if (mpvUnlistenRef.current) {
+        mpvUnlistenRef.current();
+        mpvUnlistenRef.current = null;
+      }
+      mpvActiveRef.current = false;
+      mpvInitializedRef.current = false;
+      mpvObservingRef.current = false;
+      mpvLastPauseRef.current = null;
     }
     setActiveId(null);
     setIsCollapsed(false);
@@ -1876,8 +2276,9 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
     }
     
     // Report playback stopped before navigating
-    if (selectedSource && videoRef.current) {
-      const positionTicks = Math.floor(videoRef.current.currentTime * 10000000);
+    if (selectedSource) {
+      const seconds = useLibmpv ? currentTimeRef.current : (videoRef.current?.currentTime ?? 0);
+      const positionTicks = Math.floor(seconds * 10000000);
       try {
         await embyApi.reportPlaybackStopped({
           ItemId: resolvedId!,
@@ -1898,6 +2299,21 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
     if (shakaRef.current) {
       shakaRef.current.destroy();
       shakaRef.current = null;
+    }
+    if (mpvActiveRef.current && mpvApiRef.current) {
+      try {
+        await mpvApiRef.current.destroy();
+      } catch (err) {
+        console.warn('Failed to destroy LibMPV instance:', err);
+      }
+      if (mpvUnlistenRef.current) {
+        mpvUnlistenRef.current();
+        mpvUnlistenRef.current = null;
+      }
+      mpvActiveRef.current = false;
+      mpvInitializedRef.current = false;
+      mpvObservingRef.current = false;
+      mpvLastPauseRef.current = null;
     }
     
     navigate(`/player/${prevEpisode.Id}`, { replace: true, state: { backgroundLocation: backgroundLocation ?? location } });
@@ -1913,8 +2329,9 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
     }
     
     // Report playback stopped before navigating
-    if (selectedSource && videoRef.current) {
-      const positionTicks = Math.floor(videoRef.current.currentTime * 10000000);
+    if (selectedSource) {
+      const seconds = useLibmpv ? currentTimeRef.current : (videoRef.current?.currentTime ?? 0);
+      const positionTicks = Math.floor(seconds * 10000000);
       try {
         await embyApi.reportPlaybackStopped({
           ItemId: resolvedId!,
@@ -1935,6 +2352,21 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
     if (shakaRef.current) {
       shakaRef.current.destroy();
       shakaRef.current = null;
+    }
+    if (mpvActiveRef.current && mpvApiRef.current) {
+      try {
+        await mpvApiRef.current.destroy();
+      } catch (err) {
+        console.warn('Failed to destroy LibMPV instance:', err);
+      }
+      if (mpvUnlistenRef.current) {
+        mpvUnlistenRef.current();
+        mpvUnlistenRef.current = null;
+      }
+      mpvActiveRef.current = false;
+      mpvInitializedRef.current = false;
+      mpvObservingRef.current = false;
+      mpvLastPauseRef.current = null;
     }
     
     navigate(`/player/${nextEpisode.Id}`, { replace: true, state: { backgroundLocation: backgroundLocation ?? location } });
@@ -1986,20 +2418,34 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
   }, [showControls]);
 
   const toggleMute = useCallback(() => {
+    if (useLibmpv && mpvApiRef.current) {
+      const nextMuted = !isMuted;
+      mpvApiRef.current.setProperty('mute', nextMuted).catch(() => {});
+      setIsMuted(nextMuted);
+      showControlsTemporarily();
+      return;
+    }
     if (!videoRef.current) return;
     videoRef.current.muted = !videoRef.current.muted;
     setIsMuted(videoRef.current.muted);
     showControlsTemporarily();
-  }, [showControlsTemporarily]);
+  }, [isMuted, showControlsTemporarily, useLibmpv]);
 
   const togglePlayPause = useCallback(() => {
+    if (useLibmpv && mpvApiRef.current) {
+      if (!mpvActiveRef.current) return;
+      const nextPaused = isPlayingRef.current;
+      mpvApiRef.current.setProperty('pause', nextPaused).catch(() => {});
+      setIsPlaying(!nextPaused);
+      return;
+    }
     if (!videoRef.current) return;
     if (videoRef.current.paused) {
       videoRef.current.play();
     } else {
       videoRef.current.pause();
     }
-  }, []);
+  }, [useLibmpv]);
 
   // Effect to handle space bar for pause/unpause
   useEffect(() => {
@@ -2082,7 +2528,7 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
   };
 
   const updateSeekPosition = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!videoRef.current) return;
+    if (!useLibmpv && !videoRef.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const time = pos * duration;
@@ -2091,6 +2537,16 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
   };
 
   const seekToTime = (time: number) => {
+    if (useLibmpv && mpvApiRef.current) {
+      if (!mpvActiveRef.current || duration <= 0) return;
+      isSeekingRef.current = true;
+      mpvApiRef.current.command('seek', [time, 'absolute', 'exact']).catch(() => {});
+      setCurrentTime(time);
+      setTimeout(() => {
+        isSeekingRef.current = false;
+      }, 500);
+      return;
+    }
     if (!videoRef.current) return;
     isSeekingRef.current = true;
     videoRef.current.currentTime = time;
@@ -2147,8 +2603,17 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
   }, [isDragging, dragTime, duration]);
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!videoRef.current) return;
     const newVolume = parseFloat(e.target.value);
+    if (useLibmpv && mpvApiRef.current) {
+      mpvApiRef.current.setProperty('volume', Math.round(newVolume * 100)).catch(() => {});
+      setVolume(newVolume);
+      if (newVolume > 0 && isMuted) {
+        mpvApiRef.current.setProperty('mute', false).catch(() => {});
+        setIsMuted(false);
+      }
+      return;
+    }
+    if (!videoRef.current) return;
     videoRef.current.volume = newVolume;
     setVolume(newVolume);
     if (newVolume > 0 && isMuted) {
@@ -2285,7 +2750,7 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
       {streamUrl && (
         <div
           ref={containerRef}
-          className={`player-ui fixed inset-0 z-50 bg-black overflow-hidden border-t border-white/10 shadow-2xl motion-safe:transition-transform motion-safe:duration-500 motion-safe:ease-[cubic-bezier(0.22,1,0.36,1)] [--mini-height:5rem] sm:[--mini-height:6rem]`}
+          className={`player-ui fixed inset-0 z-50 ${useLibmpv ? 'bg-transparent' : 'bg-black'} overflow-hidden border-t border-white/10 shadow-2xl motion-safe:transition-transform motion-safe:duration-500 motion-safe:ease-[cubic-bezier(0.22,1,0.36,1)] [--mini-height:5rem] sm:[--mini-height:6rem]`}
           style={
             {
               transform: isCollapsedView ? 'translateY(calc(100% - var(--mini-height)))' : 'translateY(0)',
@@ -2380,7 +2845,7 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
             ref={videoRef}
             autoPlay
             onClick={togglePlayPause}
-            className={`w-full h-full cursor-pointer ${isCollapsedView ? 'object-cover opacity-0 pointer-events-none' : 'object-contain'}`}
+            className={`w-full h-full cursor-pointer ${isCollapsedView || useLibmpv ? 'object-cover opacity-0 pointer-events-none' : 'object-contain'}`}
             style={{ 
               filter: currentFilterCss,
               transform: autoZoomEnabled 
@@ -2737,7 +3202,7 @@ export function Player({ id: playerId, isCollapsed: isCollapsedProp }: { id?: st
                 {/* Buffer bar */}
                 <div 
                   className="absolute h-full bg-gray-500 rounded-full pointer-events-none"
-                  style={{ width: `${bufferedPercentage}%` }}
+                  style={{ width: `${useLibmpv ? mpvBufferedPercent : bufferedPercentage}%` }}
                 />
                 {/* Progress bar */}
                 <div 

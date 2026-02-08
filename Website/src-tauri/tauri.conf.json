@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Aether",
-  "version": "3.0.11",
+  "version": "3.0.12",
   "identifier": "com.aether.app",
   "build": {
     "frontendDist": "../dist",
@@ -18,6 +18,8 @@
         "height": 720,
         "minWidth": 1024,
         "minHeight": 600,
+        "backgroundColor": "#00000000",
+        "transparent": true,
         "resizable": true,
         "fullscreen": false,
         "maximized": true,
@@ -45,6 +47,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "resources": [
+      "lib/**/*"
     ],
     "windows": {
       "certificateThumbprint": null,

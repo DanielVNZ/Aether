@@ -32,10 +32,11 @@ function AppRoutes() {
 
   return (
     <>
-      <UpdateBanner />
-      <ConsentBanner />
-      <Suspense fallback={<AppFallbackSkeleton />}>
-        <Routes location={backgroundLocation ?? location}>
+      <div id="app-shell">
+        <UpdateBanner />
+        <ConsentBanner />
+        <Suspense fallback={<AppFallbackSkeleton />}>
+          <Routes location={backgroundLocation ?? location}>
           <Route path="/login" element={<Login />} />
           <Route path="/connect" element={<ConnectServers />} />
           <Route
@@ -111,8 +112,9 @@ function AppRoutes() {
             }
           />
           <Route path="/" element={<Navigate to="/home" replace />} />
-        </Routes>
-      </Suspense>
+          </Routes>
+        </Suspense>
+      </div>
       <PlayerHost />
     </>
   );

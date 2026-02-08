@@ -14,6 +14,17 @@ body {
   overflow-x: hidden;
 }
 
+html.mpv-transparent,
+body.mpv-transparent,
+body.mpv-transparent #root {
+  background-color: transparent;
+}
+
+body.libmpv-fullscreen #app-shell {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* Modern Netflix-style scrollbar */
 ::-webkit-scrollbar {
   width: 12px;
